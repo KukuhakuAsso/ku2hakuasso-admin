@@ -56,7 +56,6 @@ export const HINT_STATUS = {
 export const THREAD_KIND = {
     system: "官方公告",
     account: "账号级会话",
-    team: "队伍会话",
 };
 
 export function statusMeta(status, map) {

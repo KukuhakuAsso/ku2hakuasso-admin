@@ -14,8 +14,7 @@
       </el-table-column>
       <el-table-column label="对象" min-width="140">
         <template #default="{ row }">
-          <template v-if="row.kind === 'team'">{{ row.teamName || "—" }}</template>
-          <template v-else-if="row.kind === 'account'">
+          <template v-if="row.kind === 'account'">
             {{ row.ownerUsername || "—" }}（{{ row.ownerPlayerNo || "—" }}）
           </template>
           <template v-else>全体玩家</template>
@@ -105,7 +104,10 @@ async function load() {
     loading.value = true;
     try {
         const data = await listThreads({ only_unread: onlyUnread.value || undefined, limit: 100 });
-        threads.value = data?.threads || [];
+        // 站内信不再提供队伍内通讯：后端若仍返回队伍会话，一律不展示。
+        threads.value = (data?.threads || []).filter(
+            (item) => item.kind !== "team",
+        );
     } catch (err) {
         ElMessage.error(err.message);
     } finally {
@@ -117,7 +119,7 @@ function kindLabel(kind) {
     return THREAD_KIND[kind] || kind;
 }
 function kindType(kind) {
-    return kind === "team" ? "primary" : kind === "account" ? "warning" : "info";
+    return kind === "account" ? "warning" : "info";
 }
 
 // ---- 会话详情 ----
@@ -133,7 +135,6 @@ const messages = ref([]);
 const drawerTitle = computed(() => {
     const t = drawer.thread;
     if (!t) return "会话";
-    if (t.kind === "team") return `会话 #${t.threadId} · ${t.teamName || "队伍会话"}`;
     if (t.kind === "account") return `会话 #${t.threadId} · ${t.ownerUsername || "账号级会话"}`;
     return `会话 #${t.threadId} · 官方公告`;
 });
