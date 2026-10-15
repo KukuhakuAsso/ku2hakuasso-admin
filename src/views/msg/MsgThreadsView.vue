@@ -46,7 +46,7 @@
 
     <!-- 会话详情抽屉 -->
     <el-drawer v-model="drawer.visible" size="560px" :title="drawerTitle">
-      <div class="thread-body">
+      <div>
         <div v-if="drawer.loading" class="loading"><el-skeleton :rows="6" animated /></div>
         <template v-else>
           <div v-if="!messages.length" class="empty"><el-empty description="暂无消息" /></div>
@@ -104,7 +104,7 @@ const onlyUnread = ref(false);
 async function load() {
     loading.value = true;
     try {
-        const data = await listThreads({ only_unread: onlyUnread.value || undefined, limit: 200 });
+        const data = await listThreads({ only_unread: onlyUnread.value || undefined, limit: 100 });
         threads.value = data?.threads || [];
     } catch (err) {
         ElMessage.error(err.message);
@@ -184,10 +184,6 @@ onMounted(() => load());
 </script>
 
 <style scoped>
-.thread-body {
-    height: calc(100vh - 200px);
-    overflow-y: auto;
-}
 .loading,
 .empty {
     padding: 20px;
