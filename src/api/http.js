@@ -1,0 +1,128 @@
+// 统一请求封装
+// 管理端所有接口走 /api-mist 前缀（由代理映射到后端 /api/* 路径），
+// 与站点其它子项目保持一致；登录态为 Bearer access_token。
+const API_PREFIX = "/api-mist";
+const API_VERSION = "mistarg.2026.v1";
+
+const TOKEN_KEY = "admin_token";
+
+export class ApiError extends Error {
+    constructor(status, message, detail) {
+        super(message || "请求失败");
+        this.name = "ApiError";
+        this.status = status;
+        this.detail = detail || {};
+    }
+}
+
+export function getToken() {
+    return localStorage.getItem(TOKEN_KEY);
+}
+
+export function setToken(token) {
+    if (token) localStorage.setItem(TOKEN_KEY, token);
+    else localStorage.removeItem(TOKEN_KEY);
+}
+
+export function clearSession() {
+    localStorage.removeItem(TOKEN_KEY);
+    localStorage.removeItem("admin_account");
+}
+
+// 拼接查询参数（跳过空值）
+export function buildQuery(params = {}) {
+    const usp = new URLSearchParams();
+    for (const [k, v] of Object.entries(params)) {
+        if (v === undefined || v === null || v === "") continue;
+        usp.set(k, String(v));
+    }
+    const qs = usp.toString();
+    return qs ? `?${qs}` : "";
+}
+
+// 尽力刷新访问令牌：依赖 /api/auth 路径下的 httpOnly Cookie；
+// 代理未正确转发 Cookie 时静默失败，由调用方走登出流程。
+let refreshing = null;
+async function tryRefresh() {
+    if (!getToken()) return false;
+    if (refreshing) return refreshing;
+    refreshing = (async () => {
+        try {
+            const r = await fetch(`${API_PREFIX}/auth/refresh`, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    "X-API-Version": API_VERSION,
+                },
+                credentials: "include",
+            });
+            const j = await r.json().catch(() => null);
+            if (r.ok && j?.data?.access_token) {
+                setToken(j.data.access_token);
+                return true;
+            }
+            return false;
+        } catch {
+            return false;
+        } finally {
+            setTimeout(() => {
+                refreshing = null;
+            }, 0);
+        }
+    })();
+    return refreshing;
+}
+
+// 核心请求：返回响应体中的 data 字段；ok:false 或非 2xx 抛 ApiError
+export async function request(path, { method = "GET", body } = {}) {
+    const headers = {
+        "Content-Type": "application/json",
+        "X-API-Version": API_VERSION,
+    };
+    const token = getToken();
+    if (token) headers.Authorization = `Bearer ${token}`;
+
+    const res = await fetch(`${API_PREFIX}${path}`, {
+        method,
+        headers,
+        credentials: "include",
+        body: body === undefined ? undefined : JSON.stringify(body),
+    });
+
+    let json = null;
+    try {
+        json = await res.json();
+    } catch {
+        // 非 JSON 响应
+    }
+
+    // 令牌失效：先尝试刷新后重试一次
+    if (res.status === 401) {
+        const refreshed = await tryRefresh();
+        if (refreshed) {
+            return request(path, { method, body });
+        }
+        clearSession();
+        window.dispatchEvent(new window.Event("admin:unauthorized"));
+        throw new ApiError(
+            401,
+            json?.error?.message || "未登录或令牌已失效",
+            json?.error,
+        );
+    }
+
+    if (!res.ok || (json && json.ok === false)) {
+        const detail = json?.error || {};
+        throw new ApiError(
+            res.status,
+            detail.message || `请求失败（${res.status}）`,
+            detail,
+        );
+    }
+
+    return json?.data;
+}
+
+export const get = (path, params) => request(`${path}${buildQuery(params)}`);
+export const post = (path, body) => request(path, { method: "POST", body });
+export const put = (path, body) => request(path, { method: "PUT", body });
