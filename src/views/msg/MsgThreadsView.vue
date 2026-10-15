@@ -1,86 +1,155 @@
 <template>
   <div class="page-card">
     <div class="filter-bar">
-      <el-checkbox v-model="onlyUnread" @change="load">只看未读</el-checkbox>
-      <el-button type="primary" @click="load">刷新</el-button>
+      <el-select v-model="channel" style="width: 180px" @change="first">
+        <el-option
+          v-for="item in MAIL_CHANNEL_OPTIONS"
+          :key="item.value"
+          :label="item.label"
+          :value="item.value"
+        />
+      </el-select>
+      <el-checkbox v-model="onlyUnread" @change="first">只看未读</el-checkbox>
+      <el-button type="primary" :disabled="loading" @click="first">刷新</el-button>
     </div>
 
-    <el-table v-loading="loading" :data="threads" border stripe @row-click="openThread">
-      <el-table-column prop="threadId" label="会话ID" width="90" />
-      <el-table-column label="类型" width="110">
+    <el-table
+      v-loading="loading"
+      :data="list"
+      border
+      stripe
+      @row-click="openMail"
+    >
+      <el-table-column prop="mailId" label="邮件ID" width="90" />
+      <el-table-column label="主题" min-width="240">
         <template #default="{ row }">
-          <el-tag size="small" :type="kindType(row.kind)">{{ kindLabel(row.kind) }}</el-tag>
+          <span :style="{ fontWeight: row.unread > 0 ? 600 : 400 }">
+            {{ row.subject || "（无主题）" }}
+          </span>
+          <el-tag
+            v-if="row.replyCount"
+            size="small"
+            type="info"
+            class="reply-count"
+          >
+            {{ row.replyCount }} 条回复
+          </el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="对象" min-width="140">
+      <el-table-column label="来源" width="110">
         <template #default="{ row }">
-          <template v-if="row.kind === 'account'">
+          <el-tag size="small" :type="statusMeta(row.source, MAIL_SOURCE).type">
+            {{ statusMeta(row.source, MAIL_SOURCE).label }}
+          </el-tag>
+        </template>
+      </el-table-column>
+      <el-table-column label="频道" width="150">
+        <template #default="{ row }">{{ row.channelName || "—" }}</template>
+      </el-table-column>
+      <el-table-column label="归属" min-width="150">
+        <template #default="{ row }">
+          <template v-if="row.channel === 'team'">
+            {{ row.teamName || "—" }}（#{{ row.teamId ?? "—" }}）
+          </template>
+          <template v-else-if="row.channel === 'account'">
             {{ row.ownerUsername || "—" }}（{{ row.ownerPlayerNo || "—" }}）
           </template>
           <template v-else>全体玩家</template>
         </template>
       </el-table-column>
-      <el-table-column label="预览" min-width="260">
+      <el-table-column label="方向" width="100">
         <template #default="{ row }">
-          <span :style="{ color: row.previewDirection === 'to_staff' ? '#303133' : '#909399' }">
-            {{ row.preview || "—" }}
-          </span>
+          {{ row.direction === "to_staff" ? "玩家 → 官方" : "官方 → 玩家" }}
         </template>
       </el-table-column>
       <el-table-column label="未读" width="80">
         <template #default="{ row }">
-          <el-badge v-if="row.hasUnread" is-dot type="danger" />
+          <el-badge v-if="row.unread > 0" :value="row.unread" type="danger" />
           <span v-else>—</span>
         </template>
       </el-table-column>
-      <el-table-column label="最后消息" width="170">
-        <template #default="{ row }">{{ fmtTime(row.lastCreatedAt || row.lastMsgAt) }}</template>
+      <el-table-column label="最后回复" width="170">
+        <template #default="{ row }">
+          {{ fmtTime(row.lastReplyAt || row.createdAt) }}
+        </template>
       </el-table-column>
-      <el-table-column label="操作" width="100" fixed="right">
+      <el-table-column label="操作" width="90" fixed="right">
         <template #default>
           <el-button size="small" text type="primary">查看</el-button>
         </template>
       </el-table-column>
     </el-table>
 
-    <!-- 会话详情抽屉 -->
-    <el-drawer v-model="drawer.visible" size="560px" :title="drawerTitle">
-      <div>
-        <div v-if="drawer.loading" class="loading"><el-skeleton :rows="6" animated /></div>
+    <PageNav
+      :page="page"
+      :has-more="hasMore"
+      :loading="loading"
+      @prev="prev"
+      @next="next"
+    />
+
+    <!-- 邮件详情抽屉：整段对话（根 + 全部回复）+ 官方回复 -->
+    <el-drawer v-model="drawer.visible" size="620px" :title="drawerTitle">
+      <div class="mail-detail">
+        <div class="mail-meta">
+          <span class="label">主题</span>
+          <span>{{ mail?.subject || "（无主题）" }}</span>
+        </div>
+        <div class="mail-meta">
+          <span class="label">频道</span>
+          <span>{{ mail?.channelName || "—" }}</span>
+          <span class="label">来源</span>
+          <span>{{ statusMeta(mail?.source, MAIL_SOURCE).label }}</span>
+        </div>
+
+        <div v-if="drawer.loading" class="loading">
+          <el-skeleton :rows="6" animated />
+        </div>
         <template v-else>
-          <div v-if="!messages.length" class="empty"><el-empty description="暂无消息" /></div>
-          <div v-for="msg in messages" :key="msg.id" class="msg" :class="msg.direction">
+          <div v-if="!messages.length" class="empty">
+            <el-empty description="暂无邮件记录" />
+          </div>
+          <div
+            v-for="msg in messages"
+            :key="msg.id"
+            class="msg"
+            :class="msg.direction"
+          >
             <div class="msg-meta">
               <span class="msg-sender">{{ senderName(msg) }}</span>
               <span class="msg-time">{{ fmtTime(msg.createdAt) }}</span>
             </div>
+            <div class="msg-subject">{{ msg.subject }}</div>
             <div class="msg-bubble">{{ msg.content }}</div>
           </div>
         </template>
       </div>
       <template #footer>
         <div class="reply-bar">
-          <el-input
-            v-model="drawer.content"
-            type="textarea"
-            :rows="3"
-            maxlength="2000"
-            show-word-limit
-            :disabled="!auth.isAdmin"
-            placeholder="回复正文（1–2000 字）"
-          />
-          <div class="reply-actions">
-            <el-button @click="loadMessages">刷新</el-button>
-            <el-button
-              v-if="auth.isAdmin"
-              type="primary"
-              :loading="drawer.sending"
-              :disabled="!drawer.content.trim()"
-              @click="sendReply"
-            >
-              发送回复
-            </el-button>
-          </div>
+          <p v-if="!canReply" class="tip">
+            这封邮件不可回复（官方公告只读，或当前账号没有 msg.feedback.handle 权限）。
+          </p>
+          <template v-else>
+            <el-input
+              v-model="drawer.content"
+              type="textarea"
+              :rows="3"
+              maxlength="2000"
+              show-word-limit
+              placeholder="回复正文（1–2000 字），主题由服务端生成为「回复：<根主题>」"
+            />
+            <div class="reply-actions">
+              <el-button @click="loadMessages">刷新</el-button>
+              <el-button
+                type="primary"
+                :loading="drawer.sending"
+                :disabled="!drawer.content.trim()"
+                @click="sendReply"
+              >
+                发送回复
+              </el-button>
+            </div>
+          </template>
         </div>
       </template>
     </el-drawer>
@@ -91,65 +160,70 @@
 import { computed, onMounted, reactive, ref } from "vue";
 import { ElMessage } from "element-plus";
 import { useAuthStore } from "@/stores/auth";
-import { listThreads, getThread, replyThread } from "@/api/msg";
-import { fmtTime, THREAD_KIND } from "@/utils/format";
+import { listMails, getMail, replyMail } from "@/api/msg";
+import { useCursorPage } from "@/composables/useCursorPage";
+import PageNav from "@/components/PageNav.vue";
+import {
+    fmtTime,
+    MAIL_CHANNEL_OPTIONS,
+    MAIL_SOURCE,
+    statusMeta,
+} from "@/utils/format";
 
 const auth = useAuthStore();
 
-const threads = ref([]);
-const loading = ref(false);
+const channel = ref("");
 const onlyUnread = ref(false);
 
-async function load() {
-    loading.value = true;
-    try {
-        const data = await listThreads({ only_unread: onlyUnread.value || undefined, limit: 100 });
-        // 站内信不再提供队伍内通讯：后端若仍返回队伍会话，一律不展示。
-        threads.value = (data?.threads || []).filter(
-            (item) => item.kind !== "team",
-        );
-    } catch (err) {
-        ElMessage.error(err.message);
-    } finally {
-        loading.value = false;
-    }
-}
+// 列队用邮件式接口：每条记录一行，倒序游标分页
+const fetcher = (cursor) =>
+    listMails({
+        cursor,
+        limit: 20,
+        channel: channel.value || undefined,
+        only_unread: onlyUnread.value || undefined,
+    });
+const { list, page, hasMore, loading, first, next, prev } =
+    useCursorPage(fetcher);
 
-function kindLabel(kind) {
-    return THREAD_KIND[kind] || kind;
-}
-function kindType(kind) {
-    return kind === "account" ? "warning" : "info";
-}
-
-// ---- 会话详情 ----
+// ---- 邮件详情 ----
 const drawer = reactive({
     visible: false,
     loading: false,
     sending: false,
-    thread: null,
+    mailId: null,
     content: "",
 });
+const mail = ref(null);
 const messages = ref([]);
 
+// 公告只读；回复还需要 msg.feedback.handle 权限
+const canReply = computed(
+    () => Boolean(mail.value?.canReply) && auth.can("msg.feedback.handle"),
+);
+
 const drawerTitle = computed(() => {
-    const t = drawer.thread;
-    if (!t) return "会话";
-    if (t.kind === "account") return `会话 #${t.threadId} · ${t.ownerUsername || "账号级会话"}`;
-    return `会话 #${t.threadId} · 官方公告`;
+    const item = mail.value;
+    if (!item) return "邮件";
+    return `邮件 #${item.mailId} · ${item.subject || "（无主题）"}`;
 });
 
-async function openThread(row) {
-    drawer.thread = row;
+async function openMail(row) {
+    drawer.mailId = row.mailId;
     drawer.content = "";
     drawer.visible = true;
+    mail.value = null;
+    messages.value = [];
     await loadMessages();
 }
 
 async function loadMessages() {
+    if (!drawer.mailId) return;
+
     drawer.loading = true;
     try {
-        const data = await getThread(drawer.thread.threadId, { since_id: 0, limit: 100 });
+        const data = await getMail(drawer.mailId, { limit: 100 });
+        mail.value = data?.mail || null;
         messages.value = data?.messages || [];
     } catch (err) {
         ElMessage.error(err.message);
@@ -158,22 +232,23 @@ async function loadMessages() {
     }
 }
 
+// 发送者：from 是真实账号名（管理端不匿名）；系统身份（公告 / 警告）三项都是 null
 function senderName(msg) {
-    if (msg.sender?.username) return msg.sender.username;
-    if (msg.senderId === null || msg.senderId === undefined) {
-        return msg.direction === "to_player" ? "官方" : "玩家";
-    }
-    return `#${msg.senderId}`;
+    const from = msg.from ?? {};
+    if (from.id === null || from.id === undefined) return "官方 / 系统";
+    return from.name || `#${from.id}`;
 }
 
 async function sendReply() {
+    if (!canReply.value || !drawer.content.trim()) return;
+
     drawer.sending = true;
     try {
-        await replyThread({ thread_id: drawer.thread.threadId, content: drawer.content.trim() });
+        await replyMail(drawer.mailId, { content: drawer.content.trim() });
         ElMessage.success("已回复");
         drawer.content = "";
         await loadMessages();
-        await load();
+        first();
     } catch (err) {
         ElMessage.error(err.message);
     } finally {
@@ -181,10 +256,38 @@ async function sendReply() {
     }
 }
 
-onMounted(() => load());
+onMounted(() => first());
 </script>
 
 <style scoped>
+.tip {
+    color: #909399;
+    font-size: 12px;
+}
+.reply-count {
+    margin-left: 8px;
+}
+.mail-detail {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+.mail-meta {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+}
+.mail-meta .label {
+    color: #909399;
+    font-size: 12px;
+}
+.msg-subject {
+    margin-bottom: 4px;
+    color: #606266;
+    font-size: 12px;
+}
 .loading,
 .empty {
     padding: 20px;

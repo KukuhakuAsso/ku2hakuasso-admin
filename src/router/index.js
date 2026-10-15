@@ -97,6 +97,13 @@ const routes = [
                 component: () =>
                     import("@/views/maintenance/MaintenanceView.vue"),
             },
+            {
+                path: "permissions",
+                name: "permissions",
+                component: () =>
+                    import("@/views/permissions/PermissionsView.vue"),
+                meta: { requiresAdmin: true },
+            },
         ],
     },
     { path: "/:pathMatch(.*)*", redirect: "/dashboard" },
@@ -116,6 +123,7 @@ router.beforeEach((to) => {
         return true;
     }
     if (!auth.isAuthenticated) return "/login";
+    if (to.meta.requiresAdmin && !auth.isAdmin) return "/dashboard";
     if (to.meta.requiresStaff && !auth.isStaff) return "/dashboard";
     return true;
 });

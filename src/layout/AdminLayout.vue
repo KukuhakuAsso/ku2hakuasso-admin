@@ -22,13 +22,13 @@
         <el-menu-item index="/teams">
           <el-icon><OfficeBuilding /></el-icon><span>队伍管理</span>
         </el-menu-item>
-        <el-menu-item index="/messages">
+        <el-menu-item v-if="canMsgWorkbench" index="/messages">
           <el-icon><ChatDotRound /></el-icon><span>站内信工作台</span>
         </el-menu-item>
-        <el-menu-item index="/hints">
+        <el-menu-item v-if="auth.can('msg.hint.handle')" index="/hints">
           <el-icon><QuestionFilled /></el-icon><span>提示工作台</span>
         </el-menu-item>
-        <el-menu-item index="/announcements">
+        <el-menu-item v-if="auth.can('msg.announce.publish')" index="/announcements">
           <el-icon><Bell /></el-icon><span>公告</span>
         </el-menu-item>
         <el-sub-menu index="progress-group">
@@ -53,6 +53,9 @@
         </el-menu-item>
         <el-menu-item v-if="auth.isAdmin" index="/maintenance">
           <el-icon><Tools /></el-icon><span>维护操作</span>
+        </el-menu-item>
+        <el-menu-item v-if="auth.isAdmin" index="/permissions">
+          <el-icon><Lock /></el-icon><span>权限管理</span>
         </el-menu-item>
       </el-menu>
     </el-aside>
@@ -87,6 +90,10 @@ const auth = useAuthStore();
 
 const activePath = computed(() => route.path);
 const currentTitle = computed(() => route.meta.title || document.title);
+// 站内信工作台：有反馈处理权限看全部频道，只有公告权限时后端只返回公告
+const canMsgWorkbench = computed(
+    () => auth.can("msg.feedback.handle") || auth.can("msg.announce.publish"),
+);
 
 async function onLogout() {
     await auth.logout();

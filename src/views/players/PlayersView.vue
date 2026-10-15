@@ -199,11 +199,17 @@ async function toggleBan(row) {
 async function warnRow(row) {
     let value;
     try {
-        const { value: v } = await ElMessageBox.prompt("警告将投递到玩家所在会话（全队可见）", "警告玩家", {
-            inputType: "textarea",
-            inputPlaceholder: "请填写警告原因（1–200 字）",
-            inputValidator: (s) => (s && s.trim().length >= 1 && s.trim().length <= 200) || "原因需为 1–200 字",
-        });
+        const { value: v } = await ElMessageBox.prompt(
+            "警告将投递到玩家所在队伍会话（全队可见）；玩家没有队伍时投递到其账号级会话",
+            "警告玩家",
+            {
+                inputType: "textarea",
+                inputPlaceholder: "请填写警告原因（1–200 字）",
+                inputValidator: (s) =>
+                    (s && s.trim().length >= 1 && s.trim().length <= 200) ||
+                    "原因需为 1–200 字",
+            },
+        );
         value = v;
     } catch {
         return;

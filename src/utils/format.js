@@ -47,16 +47,32 @@ export const TEAM_STATUS = {
     3: { label: "已封禁", type: "danger" },
 };
 
+// 提示工作台状态（两步报价：pending 待报价 → quoted 已报价 → answered 已答复）
 export const HINT_STATUS = {
-    pending: { label: "待处理", type: "warning" },
+    pending: { label: "待报价", type: "warning" },
+    quoted: { label: "已报价", type: "primary" },
     answered: { label: "已答复", type: "success" },
     rejected: { label: "已拒绝", type: "danger" },
+    closed: { label: "已关闭", type: "info" },
 };
 
-export const THREAD_KIND = {
-    system: "官方公告",
-    account: "账号级会话",
+// 站内信工作台（邮件式）：来源标记（服务端判定，客户端不能指定）
+export const MAIL_SOURCE = {
+    mail: { label: "邮件", type: "info" },
+    feedback: { label: "问题反馈", type: "warning" },
+    hint: { label: "求提示", type: "success" },
+    announce: { label: "公告", type: "danger" },
+    warn: { label: "官方警告", type: "danger" },
+    system: { label: "系统消息", type: "info" },
 };
+
+// 频道筛选项（列表里的频道名以服务端返回的 channelName 为准，不要自己拼）
+export const MAIL_CHANNEL_OPTIONS = [
+    { value: "", label: "全部频道" },
+    { value: "system", label: "官方公告" },
+    { value: "account", label: "与官方的联系" },
+    { value: "team", label: "队伍会话" },
+];
 
 export function statusMeta(status, map) {
     return map[status] || { label: `未知(${status})`, type: "info" };

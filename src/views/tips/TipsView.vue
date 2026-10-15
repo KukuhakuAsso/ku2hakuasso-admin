@@ -15,8 +15,10 @@
             <el-descriptions-item label="每小时速率">{{ rule.rate_per_hour }}</el-descriptions-item>
             <el-descriptions-item label="每日上限">{{ rule.daily_cap }}</el-descriptions-item>
             <el-descriptions-item label="闲置衰减(%)">{{ rule.idle_decay_pct ?? 0 }}</el-descriptions-item>
-            <el-descriptions-item label="人工提示单价 hint_cost">{{ rule.hint_cost ?? 1 }}</el-descriptions-item>
           </el-descriptions>
+          <div class="hint rule-note">
+            人工提示价格由「提示工作台」逐条报价，不再有全局单价。
+          </div>
         </el-card>
       </el-col>
 
@@ -55,9 +57,6 @@
         </el-form-item>
         <el-form-item label="闲置衰减(%)">
           <el-input-number v-model="editDialog.form.idle_decay_pct" :min="0" :max="100" style="width: 100%" />
-        </el-form-item>
-        <el-form-item label="提示单价">
-          <el-input-number v-model="editDialog.form.hint_cost" :min="0" :max="1000000" style="width: 100%" />
         </el-form-item>
         <el-form-item label="规则名称">
           <el-input v-model="editDialog.form.name" />
@@ -114,6 +113,9 @@ async function submitGrant() {
             ...(grant.idem_key ? { idem_key: grant.idem_key } : {}),
         });
         ElMessage.success(`执行成功，当前余额：${data?.balance ?? "—"}`);
+        if (data?.idempotent) {
+            ElMessage.warning("幂等命中，未重复生效");
+        }
     } catch (err) {
         ElMessage.error(err.message);
     } finally {
@@ -124,7 +126,7 @@ async function submitGrant() {
 const editDialog = reactive({
     visible: false,
     loading: false,
-    form: { rate_per_hour: 20, daily_cap: 480, idle_decay_pct: 0, hint_cost: 1, name: "" },
+    form: { rate_per_hour: 20, daily_cap: 480, idle_decay_pct: 0, name: "" },
 });
 
 function openEditRule() {
@@ -132,7 +134,6 @@ function openEditRule() {
         rate_per_hour: rule.value?.rate_per_hour ?? 20,
         daily_cap: rule.value?.daily_cap ?? 480,
         idle_decay_pct: rule.value?.idle_decay_pct ?? 0,
-        hint_cost: rule.value?.hint_cost ?? 1,
         name: rule.value?.name || "",
     };
     editDialog.visible = true;
@@ -141,7 +142,13 @@ function openEditRule() {
 async function submitEditRule() {
     editDialog.loading = true;
     try {
-        const data = await putTipsRule(editDialog.form);
+        // hint_cost 已废弃（2026-10-14）：PUT 不再接受，也不再下发
+        const data = await putTipsRule({
+            name: editDialog.form.name,
+            rate_per_hour: editDialog.form.rate_per_hour,
+            daily_cap: editDialog.form.daily_cap,
+            idle_decay_pct: editDialog.form.idle_decay_pct,
+        });
         rule.value = data?.rule || data;
         ElMessage.success("规则已更新（立即生效）");
         editDialog.visible = false;
@@ -165,5 +172,8 @@ onMounted(() => loadRule());
     font-size: 12px;
     color: #909399;
     width: 100%;
+}
+.rule-note {
+    margin-top: 12px;
 }
 </style>
