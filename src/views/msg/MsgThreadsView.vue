@@ -160,7 +160,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, reactive, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from "vue";
 import { ElMessage } from "element-plus";
 import { useAuthStore } from "@/stores/auth";
 import { listMails, getMail, replyMail } from "@/api/msg";
@@ -172,6 +172,9 @@ import {
   MAIL_SOURCE,
   statusMeta,
 } from "@/utils/format";
+
+const POLL_INTERVAL_MS = 10000;
+let pollTimer = null;
 
 const auth = useAuthStore();
 
@@ -199,6 +202,27 @@ const drawer = reactive({
 });
 const mail = ref(null);
 const messages = ref([]);
+
+function startPolling() {
+  stopPolling();
+  pollTimer = setInterval(() => {
+    if (!drawer.visible) {
+      first();
+      return;
+    }
+
+    if (drawer.mailId) {
+      loadMessages();
+    }
+  }, POLL_INTERVAL_MS);
+}
+
+function stopPolling() {
+  if (pollTimer) {
+    clearInterval(pollTimer);
+    pollTimer = null;
+  }
+}
 
 // 公告只读；回复还需要 msg.feedback.handle 权限
 const canReply = computed(
@@ -268,7 +292,14 @@ async function sendReply() {
   }
 }
 
-onMounted(() => first());
+onMounted(() => {
+  first();
+  startPolling();
+});
+
+onBeforeUnmount(() => {
+  stopPolling();
+});
 </script>
 
 <style scoped>

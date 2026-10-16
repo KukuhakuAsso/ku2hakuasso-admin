@@ -1,7 +1,8 @@
 <template>
   <div class="page-card">
     <div class="filter-bar">
-      <el-select v-model="filters.status" placeholder="状态（默认正常）" style="width: 160px" clearable>
+      <el-select v-model="filters.status" placeholder="状态（默认全部）" style="width: 160px" clearable>
+        <el-option label="全部" :value="0" />
         <el-option label="正常" :value="1" />
         <el-option label="已解散" :value="2" />
         <el-option label="已封禁" :value="3" />
@@ -109,7 +110,7 @@ import PageNav from "@/components/PageNav.vue";
 import { fmtTime, TEAM_STATUS, statusMeta } from "@/utils/format";
 
 const auth = useAuthStore();
-const filters = reactive({ status: "" });
+const filters = reactive({ status: 0 });
 
 const fetcher = (cursor) => listTeams({ ...filters, cursor, limit: 50 });
 const { list, page, hasMore, loading, first, next, prev } = useCursorPage(fetcher);
@@ -118,7 +119,7 @@ function search() {
     first();
 }
 function reset() {
-    filters.status = "";
+    filters.status = 0;
     first();
 }
 
