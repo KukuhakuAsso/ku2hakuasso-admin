@@ -10,7 +10,9 @@
         />
       </el-select>
       <el-checkbox v-model="onlyUnread" @change="first">只看未读</el-checkbox>
-      <el-button type="primary" :disabled="loading" @click="first">刷新</el-button>
+      <el-button type="primary" :disabled="loading" @click="first"
+        >刷新</el-button
+      >
     </div>
 
     <el-table
@@ -88,7 +90,7 @@
       @next="next"
     />
 
-    <!-- 邮件详情抽屉：整段对话（根 + 全部回复）+ 官方回复 -->
+    <!-- 邮件详情抽屉：mail（当前这封）+ replyChain（它回复过的链）+ 官方回复 -->
     <el-drawer v-model="drawer.visible" size="620px" :title="drawerTitle">
       <div class="mail-detail">
         <div class="mail-meta">
@@ -111,7 +113,7 @@
           </div>
           <div
             v-for="msg in messages"
-            :key="msg.id"
+            :key="msg.mailId"
             class="msg"
             :class="msg.direction"
           >
@@ -127,7 +129,8 @@
       <template #footer>
         <div class="reply-bar">
           <p v-if="!canReply" class="tip">
-            这封邮件不可回复（官方公告只读，或当前账号没有 msg.feedback.handle 权限）。
+            这封邮件不可回复（官方公告只读，或当前账号没有 msg.feedback.handle
+            权限）。
           </p>
           <template v-else>
             <el-input
@@ -164,10 +167,10 @@ import { listMails, getMail, replyMail } from "@/api/msg";
 import { useCursorPage } from "@/composables/useCursorPage";
 import PageNav from "@/components/PageNav.vue";
 import {
-    fmtTime,
-    MAIL_CHANNEL_OPTIONS,
-    MAIL_SOURCE,
-    statusMeta,
+  fmtTime,
+  MAIL_CHANNEL_OPTIONS,
+  MAIL_SOURCE,
+  statusMeta,
 } from "@/utils/format";
 
 const auth = useAuthStore();
@@ -177,83 +180,92 @@ const onlyUnread = ref(false);
 
 // 列队用邮件式接口：每条记录一行，倒序游标分页
 const fetcher = (cursor) =>
-    listMails({
-        cursor,
-        limit: 20,
-        channel: channel.value || undefined,
-        only_unread: onlyUnread.value || undefined,
-    });
+  listMails({
+    cursor,
+    limit: 20,
+    channel: channel.value || undefined,
+    only_unread: onlyUnread.value || undefined,
+  });
 const { list, page, hasMore, loading, first, next, prev } =
-    useCursorPage(fetcher);
+  useCursorPage(fetcher);
 
 // ---- 邮件详情 ----
 const drawer = reactive({
-    visible: false,
-    loading: false,
-    sending: false,
-    mailId: null,
-    content: "",
+  visible: false,
+  loading: false,
+  sending: false,
+  mailId: null,
+  content: "",
 });
 const mail = ref(null);
 const messages = ref([]);
 
 // 公告只读；回复还需要 msg.feedback.handle 权限
 const canReply = computed(
-    () => Boolean(mail.value?.canReply) && auth.can("msg.feedback.handle"),
+  () => Boolean(mail.value?.canReply) && auth.can("msg.feedback.handle"),
 );
 
 const drawerTitle = computed(() => {
-    const item = mail.value;
-    if (!item) return "邮件";
-    return `邮件 #${item.mailId} · ${item.subject || "（无主题）"}`;
+  const item = mail.value;
+  if (!item) return "邮件";
+  return `邮件 #${item.mailId} · ${item.subject || "（无主题）"}`;
 });
 
 async function openMail(row) {
-    drawer.mailId = row.mailId;
-    drawer.content = "";
-    drawer.visible = true;
-    mail.value = null;
-    messages.value = [];
-    await loadMessages();
+  drawer.mailId = row.mailId;
+  drawer.content = "";
+  drawer.visible = true;
+  mail.value = null;
+  messages.value = [];
+  await loadMessages();
 }
 
 async function loadMessages() {
-    if (!drawer.mailId) return;
+  if (!drawer.mailId) return;
 
-    drawer.loading = true;
-    try {
-        const data = await getMail(drawer.mailId, { limit: 100 });
-        mail.value = data?.mail || null;
-        messages.value = data?.messages || [];
-    } catch (err) {
-        ElMessage.error(err.message);
-    } finally {
-        drawer.loading = false;
+  drawer.loading = true;
+  try {
+    const data = await getMail(drawer.mailId);
+    mail.value = data?.mail || null;
+    // 渲染顺序：mail（当前打开这封，时间最新）在前，replyChain 按服务端顺序
+    //（时间倒序，最新祖先在前、链尾是根）跟在后面——旧信息排在时间新的正文之后。
+    const chain = Array.isArray(data?.replyChain) ? data.replyChain : [];
+    messages.value = [];
+    if (mail.value) {
+      messages.value.push(mail.value);
     }
+    messages.value.push(...chain);
+  } catch (err) {
+    ElMessage.error(err.message);
+  } finally {
+    drawer.loading = false;
+  }
 }
 
 // 发送者：from 是真实账号名（管理端不匿名）；系统身份（公告 / 警告）三项都是 null
 function senderName(msg) {
-    const from = msg.from ?? {};
-    if (from.id === null || from.id === undefined) return "官方 / 系统";
-    return from.name || `#${from.id}`;
+  const from = msg.from ?? {};
+  if (from.id === null || from.id === undefined) return "官方 / 系统";
+  return from.name || `#${from.id}`;
 }
 
 async function sendReply() {
-    if (!canReply.value || !drawer.content.trim()) return;
+  if (!canReply.value || !drawer.content.trim()) return;
 
-    drawer.sending = true;
-    try {
-        await replyMail(drawer.mailId, { content: drawer.content.trim() });
-        ElMessage.success("已回复");
-        drawer.content = "";
-        await loadMessages();
-        first();
-    } catch (err) {
-        ElMessage.error(err.message);
-    } finally {
-        drawer.sending = false;
-    }
+  drawer.sending = true;
+  try {
+    await replyMail(drawer.mailId, { content: drawer.content.trim() });
+    ElMessage.success("已回复");
+    drawer.content = "";
+    // 回复成功后自动关闭抽屉，回到列表并刷新（反映新回复与未读状态）
+    drawer.visible = false;
+    
+    first();
+  } catch (err) {
+    ElMessage.error(err.message);
+  } finally {
+    drawer.sending = false;
+  }
 }
 
 onMounted(() => first());
@@ -261,75 +273,75 @@ onMounted(() => first());
 
 <style scoped>
 .tip {
-    color: #909399;
-    font-size: 12px;
+  color: #909399;
+  font-size: 12px;
 }
 .reply-count {
-    margin-left: 8px;
+  margin-left: 8px;
 }
 .mail-detail {
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
 .mail-meta {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 8px;
-    font-size: 13px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
 }
 .mail-meta .label {
-    color: #909399;
-    font-size: 12px;
+  color: #909399;
+  font-size: 12px;
 }
 .msg-subject {
-    margin-bottom: 4px;
-    color: #606266;
-    font-size: 12px;
+  margin-bottom: 4px;
+  color: #606266;
+  font-size: 12px;
 }
 .loading,
 .empty {
-    padding: 20px;
+  padding: 20px;
 }
 .msg {
-    margin-bottom: 12px;
-    display: flex;
-    flex-direction: column;
-    align-items: flex-start;
+  margin-bottom: 12px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
 }
 .msg.to_player {
-    align-items: flex-end;
+  align-items: flex-end;
 }
 .msg-meta {
-    font-size: 12px;
-    color: #909399;
-    margin-bottom: 4px;
+  font-size: 12px;
+  color: #909399;
+  margin-bottom: 4px;
 }
 .msg-sender {
-    margin-right: 8px;
+  margin-right: 8px;
 }
 .msg-bubble {
-    max-width: 80%;
-    padding: 8px 12px;
-    border-radius: 8px;
-    background: #f4f4f5;
-    white-space: pre-wrap;
-    word-break: break-all;
-    font-size: 14px;
+  max-width: 80%;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: #f4f4f5;
+  white-space: pre-wrap;
+  word-break: break-all;
+  font-size: 14px;
 }
 .msg.to_player .msg-bubble {
-    background: #ecf5ff;
+  background: #ecf5ff;
 }
 .reply-bar {
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-    width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
 }
 .reply-actions {
-    display: flex;
-    justify-content: flex-end;
-    gap: 8px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
 }
 </style>

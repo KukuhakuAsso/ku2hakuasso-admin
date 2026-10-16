@@ -5,8 +5,9 @@ import { del, get, post } from "./http";
 // 邮件列表：每条发信一行，只给主题与来源，正文要点进详情
 export const listMails = (params) => get("/admin/msg/mails", params);
 
-// 某封邮件的完整对话（根 + 全部回复，一次给全）
-export const getMail = (id, params) => get(`/admin/msg/mails/${id}`, params);
+// 某封邮件的详情：mail（请求的那封自己）+ replyChain（它回复过的链，
+// 时间倒序、只上溯、不含后续回复）；没有 since_id / limit（不做会话增量）
+export const getMail = (id) => get(`/admin/msg/mails/${id}`);
 
 // 官方回复：主题由服务端生成（回复：<根主题>），请求体只有正文
 export const replyMail = (id, body) =>
