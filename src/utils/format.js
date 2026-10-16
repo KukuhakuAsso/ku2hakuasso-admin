@@ -77,3 +77,36 @@ export const MAIL_CHANNEL_OPTIONS = [
 export function statusMeta(status, map) {
     return map[status] || { label: `未知(${status})`, type: "info" };
 }
+
+// 审计动作清单（api-9-admin.md §9.7）：动作名是契约，后端将来新增的动作按原文展示
+export const AUDIT_ACTIONS = {
+    "player.warn": "警告玩家",
+    "player.ban": "封禁玩家",
+    "player.unban": "解封玩家",
+    "player.username.change": "强制修改玩家用户名",
+    "player.contact.read": "读取玩家完整联系方式",
+    "player.usernames.read": "读取玩家曾用名",
+    "team.warn": "警告队伍",
+    "team.ban": "封禁队伍",
+    "team.unban": "解封队伍",
+    "team.rename": "强制修改队名",
+    "team.dissolve": "强制解散队伍",
+    "msg.reply": "后台回复",
+    "msg.announce": "发布公告",
+    "msg.ban": "禁言",
+    "msg.unban": "解除禁言",
+    "hint.quote": "提示报价",
+    "hint.requote": "同意降价并改回答",
+    "hint.decline_cheaper": "拒绝降价",
+    "hint.reject": "拒绝求提示",
+    "tips.grant": "发放或扣减提示点",
+    "tips.rule.update": "修改提示规则",
+    "permission.grant": "授予权限组",
+    "permission.revoke": "撤销权限组",
+    "maintenance.settle_tips": "执行提示点结算",
+    "maintenance.recheck_milestones": "重新检查里程碑",
+};
+
+export function auditActionLabel(action) {
+    return AUDIT_ACTIONS[action] || action || "—";
+}

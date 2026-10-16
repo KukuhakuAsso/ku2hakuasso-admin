@@ -1,7 +1,7 @@
 <template>
   <div class="page-card">
     <div class="filter-bar">
-      <el-select v-model="filters.status" placeholder="状态（默认全部）" style="width: 160px" clearable>
+      <el-select v-model="filters.status" placeholder="状态（默认正常）" style="width: 160px">
         <el-option label="全部" :value="0" />
         <el-option label="正常" :value="1" />
         <el-option label="已解散" :value="2" />

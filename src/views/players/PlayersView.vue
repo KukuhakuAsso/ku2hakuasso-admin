@@ -45,12 +45,21 @@
       <el-table-column label="联系方式" min-width="160">
         <template #default="{ row }">{{ pick(row, "contact") || "（脱敏）" }}</template>
       </el-table-column>
-      <el-table-column label="操作" width="360" fixed="right">
+      <el-table-column label="操作" width="420" fixed="right">
         <template #default="{ row }">
           <el-button v-if="auth.isAdmin" size="small" text type="primary" @click="showContact(row)">
             联系方式
           </el-button>
           <el-button size="small" text @click="showUsernames(row)">曾用名</el-button>
+          <el-button
+            v-if="auth.isAdmin && pick(row, 'role') === 'staff'"
+            size="small"
+            text
+            type="info"
+            @click="openPermissions(row)"
+          >
+            权限
+          </el-button>
           <el-button v-if="auth.isAdmin" size="small" text type="warning" @click="warnRow(row)">
             警告
           </el-button>
@@ -115,6 +124,7 @@
 
 <script setup>
 import { onMounted, reactive, ref } from "vue";
+import { useRouter } from "vue-router";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { useAuthStore } from "@/stores/auth";
 import {
@@ -131,6 +141,7 @@ import PageNav from "@/components/PageNav.vue";
 import { pick, fmtTime, ACCOUNT_STATUS, statusMeta } from "@/utils/format";
 
 const auth = useAuthStore();
+const router = useRouter();
 const filters = reactive({ keyword: "", status: "", role: "" });
 
 const fetcher = (cursor) =>
@@ -276,6 +287,11 @@ async function showUsernames(row) {
     } finally {
         usernamesDialog.loading = false;
     }
+}
+
+// ---- 权限组：权限是逐账号授予的，带着账号 ID 跳到权限管理页 ----
+function openPermissions(row) {
+    router.push({ name: "permissions", query: { account_id: row.id } });
 }
 
 onMounted(() => first());
