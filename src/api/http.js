@@ -1,10 +1,7 @@
 // 统一请求封装
 // 管理端 API 前缀由 VITE_API_BASE_PATH 配置，并映射到后端 /api/* 路径。
 // 与站点其它子项目保持一致；登录态为 Bearer access_token。
-const API_PREFIX = import.meta.env.VITE_API_BASE_PATH || "/api-admin";
-const API_VERSION = "mistarg.2026.v1";
-
-const TOKEN_KEY = "admin_token";
+import { apiConfig, buildApiUrl, getApiHeaders } from "@/config/api";
 
 export class ApiError extends Error {
     constructor(status, message, detail) {
