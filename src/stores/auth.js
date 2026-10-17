@@ -23,6 +23,11 @@ export const useAuthStore = defineStore("auth", {
         // 文档口径：staff 及以上可读列表；写操作多为 admin 专属
         isStaff: (s) => ["staff", "admin"].includes(s.account?.role),
         isAdmin: (s) => s.account?.role === "admin",
+        // 权限清单由登录 / 刷新响应下发；admin 由角色默认拥有全部权限
+        permissions: (s) => s.account?.permissions || [],
+        can: (s) => (code) =>
+            s.account?.role === "admin" ||
+            (s.account?.permissions || []).includes(code),
         displayName: (s) =>
             s.account?.username || s.account?.player_no || "管理员",
     },

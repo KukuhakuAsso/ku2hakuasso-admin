@@ -1,10 +1,7 @@
 // 统一请求封装
 // 管理端 API 前缀由 VITE_API_BASE_PATH 配置，并映射到后端 /api/* 路径。
 // 与站点其它子项目保持一致；登录态为 Bearer access_token。
-const API_PREFIX = import.meta.env.VITE_API_BASE_PATH || "/api-admin";
-const API_VERSION = "mistarg.2026.v1";
-
-const TOKEN_KEY = "admin_token";
+import { apiConfig, buildApiUrl, getApiHeaders } from "@/config/api";
 
 export class ApiError extends Error {
     constructor(status, message, detail) {
@@ -16,16 +13,16 @@ export class ApiError extends Error {
 }
 
 export function getToken() {
-    return localStorage.getItem(TOKEN_KEY);
+    return localStorage.getItem(apiConfig.tokenKey);
 }
 
 export function setToken(token) {
-    if (token) localStorage.setItem(TOKEN_KEY, token);
-    else localStorage.removeItem(TOKEN_KEY);
+    if (token) localStorage.setItem(apiConfig.tokenKey, token);
+    else localStorage.removeItem(apiConfig.tokenKey);
 }
 
 export function clearSession() {
-    localStorage.removeItem(TOKEN_KEY);
+    localStorage.removeItem(apiConfig.tokenKey);
     localStorage.removeItem("admin_account");
 }
 
@@ -48,12 +45,9 @@ async function tryRefresh() {
     if (refreshing) return refreshing;
     refreshing = (async () => {
         try {
-            const r = await fetch(`${API_PREFIX}/auth/refresh`, {
+            const r = await fetch(buildApiUrl("/auth/refresh"), {
                 method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                    "X-API-Version": API_VERSION,
-                },
+                headers: getApiHeaders(),
                 credentials: "include",
             });
             const j = await r.json().catch(() => null);
@@ -75,14 +69,11 @@ async function tryRefresh() {
 
 // 核心请求：返回响应体中的 data 字段；ok:false 或非 2xx 抛 ApiError
 export async function request(path, { method = "GET", body } = {}) {
-    const headers = {
-        "Content-Type": "application/json",
-        "X-API-Version": API_VERSION,
-    };
+    const headers = getApiHeaders();
     const token = getToken();
     if (token) headers.Authorization = `Bearer ${token}`;
 
-    const res = await fetch(`${API_PREFIX}${path}`, {
+    const res = await fetch(buildApiUrl(path), {
         method,
         headers,
         credentials: "include",
@@ -126,3 +117,4 @@ export async function request(path, { method = "GET", body } = {}) {
 export const get = (path, params) => request(`${path}${buildQuery(params)}`);
 export const post = (path, body) => request(path, { method: "POST", body });
 export const put = (path, body) => request(path, { method: "PUT", body });
+export const del = (path) => request(path, { method: "DELETE" });

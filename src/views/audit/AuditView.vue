@@ -18,7 +18,18 @@
       <el-table-column label="操作者" min-width="150">
         <template #default="{ row }">{{ row.actor || `#${row.actorId}` }}</template>
       </el-table-column>
-      <el-table-column prop="action" label="动作" min-width="160" />
+      <el-table-column label="动作" min-width="180">
+        <template #default="{ row }">
+          <div class="action">
+            <span class="action-label">{{ auditActionLabel(row.action) }}</span>
+            <span
+              v-if="row.action !== auditActionLabel(row.action)"
+              class="action-code"
+              >{{ row.action }}</span
+            >
+          </div>
+        </template>
+      </el-table-column>
       <el-table-column label="目标" min-width="120">
         <template #default="{ row }">{{ row.targetType }} #{{ row.targetId }}</template>
       </el-table-column>
@@ -43,7 +54,7 @@ import { ElMessage } from "element-plus";
 import { listActions } from "@/api/audit";
 import { useCursorPage } from "@/composables/useCursorPage";
 import PageNav from "@/components/PageNav.vue";
-import { fmtTime, fmtJson } from "@/utils/format";
+import { fmtTime, fmtJson, auditActionLabel } from "@/utils/format";
 
 const filters = reactive({ target_type: "", target_id: "", action: "", actor_id: "" });
 
@@ -69,5 +80,15 @@ onMounted(() => first());
     font-size: 12px;
     color: #606266;
     word-break: break-all;
+}
+.action {
+    display: flex;
+    flex-direction: column;
+    line-height: 1.35;
+}
+/* 动作名是契约（查询与筛选都按它），中文标签旁保留原文便于对照 */
+.action-code {
+    color: #909399;
+    font-size: 11px;
 }
 </style>

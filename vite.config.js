@@ -28,8 +28,15 @@ export default defineConfig(({ mode }) => {
     const proxyTarget = env.API_PROXY_TARGET;
     const proxyRewriteTo = env.API_PROXY_REWRITE_TO;
 
+    // 代理前缀：projects.json 里登记的前缀 + 前端实际使用的 API 前缀（VITE_API_BASE_PATH），
+    // 后者可能不在 projects.json 中（例如 /api-admin），同样需要转发到后端
+    const apiBasePath = env.VITE_API_BASE_PATH;
+    const proxyPrefixes = [
+        ...new Set([...proxyApi, ...(apiBasePath ? [apiBasePath] : [])]),
+    ];
+
     const proxy = {};
-    for (const prefix of proxyApi) {
+    for (const prefix of proxyPrefixes) {
         proxy[prefix] = {
             target: proxyTarget,
             changeOrigin: true,
