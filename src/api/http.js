@@ -1,8 +1,10 @@
 // 统一请求封装
-// 管理端所有接口走 /api-mist 前缀（由代理映射到后端 /api/* 路径），
+// 管理端 API 前缀由 VITE_API_BASE_PATH 配置，并映射到后端 /api/* 路径。
 // 与站点其它子项目保持一致；登录态为 Bearer access_token。
-// 接口基址、版本头与票据统一由 src/config/api.js 从环境变量读取。
-import { apiConfig, buildApiUrl, getApiHeaders } from "@/config/api";
+const API_PREFIX = import.meta.env.VITE_API_BASE_PATH || "/api-admin";
+const API_VERSION = "mistarg.2026.v1";
+
+const TOKEN_KEY = "admin_token";
 
 export class ApiError extends Error {
     constructor(status, message, detail) {
