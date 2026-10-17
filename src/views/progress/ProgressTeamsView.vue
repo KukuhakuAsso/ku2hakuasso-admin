@@ -2,9 +2,10 @@
   <div class="page-card">
     <div class="filter-bar">
       <el-select v-model="filters.status" placeholder="队伍状态" style="width: 160px" clearable>
-        <el-option label="正常" :value="1" />
-        <el-option label="已解散" :value="2" />
-        <el-option label="已封禁" :value="3" />
+        <el-option label="正常" :value="2" />
+        <el-option label="已禁言" :value="3" />
+        <el-option label="已封禁" :value="4" />
+        <el-option label="已解散" :value="1" />
       </el-select>
       <el-button type="primary" @click="search">查询</el-button>
       <el-button @click="reset">重置</el-button>

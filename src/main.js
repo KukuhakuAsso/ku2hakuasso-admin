@@ -23,6 +23,9 @@ app.use(ElementPlus, { locale: zhCn });
 const auth = useAuthStore(pinia);
 
 window.addEventListener("admin:unauthorized", () => {
+    // 只清了 localStorage 还不够：pinia 里的令牌还在，守卫会认为「已登录」并把
+    // /login 弹回 /dashboard，界面就卡在一个请求全部 401 的页面上
+    auth.reset();
     if (router.currentRoute.value.path !== "/login") {
         router.replace("/login");
     }

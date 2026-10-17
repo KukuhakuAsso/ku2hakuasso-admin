@@ -162,6 +162,7 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from "vue";
 import { ElMessage } from "element-plus";
+import { useRoute } from "vue-router";
 import { useAuthStore } from "@/stores/auth";
 import { listMails, getMail, replyMail } from "@/api/msg";
 import { useCursorPage } from "@/composables/useCursorPage";
@@ -178,7 +179,12 @@ let pollTimer = null;
 
 const auth = useAuthStore();
 
-const channel = ref("");
+const route = useRoute();
+const channel = ref(
+  MAIL_CHANNEL_OPTIONS.some((item) => item.value === route.query.channel)
+    ? String(route.query.channel)
+    : "",
+);
 const onlyUnread = ref(false);
 
 // 列队用邮件式接口：每条记录一行，倒序游标分页

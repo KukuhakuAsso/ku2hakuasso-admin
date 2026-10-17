@@ -36,6 +36,14 @@ const routes = [
                 component: () => import("@/views/msg/MsgThreadsView.vue"),
             },
             {
+                // 定向通知（msg.notify.send）+ 内部公告（admin）：
+                // 发信人可在 /messages 里看到自己发出的通知与回复
+                path: "notify",
+                name: "notify",
+                component: () => import("@/views/msg/NotifyView.vue"),
+                meta: { requiresNotify: true },
+            },
+            {
                 path: "hints",
                 name: "hints",
                 component: () => import("@/views/hint/HintRequestsView.vue"),
@@ -45,6 +53,21 @@ const routes = [
                 name: "announcements",
                 component: () =>
                     import("@/views/announce/AnnouncementsView.vue"),
+            },
+            {
+                // 申诉工作台：封禁申诉仅 admin，禁言申诉需 moderation.mute
+                path: "appeals",
+                name: "appeals",
+                component: () => import("@/views/appeals/AppealsView.vue"),
+                meta: { requiresMute: true },
+            },
+            {
+                // 处罚记录：禁言列表需 moderation.mute；封禁列表仅 admin（页内再按权限分页签）
+                path: "punishments",
+                name: "punishments",
+                component: () =>
+                    import("@/views/moderation/PunishmentsView.vue"),
+                meta: { requiresMuteOrBan: true },
             },
             {
                 path: "progress",
@@ -123,7 +146,33 @@ router.beforeEach((to) => {
         return true;
     }
     if (!auth.isAuthenticated) return "/login";
+    // 已知角色但不是 staff（如刚注册出来的玩家账号）：清掉后台会话回登录页。
+    // 否则把非 staff 送回 /dashboard 会与这条守卫自身形成死循环（页面全白）。
+    // 角色未知（仅有令牌、快照还没同步回来）时先放行，等接口或 syncAccount 给出结论。
+    if (auth.account && !auth.isStaff) {
+        auth.reset();
+        return "/login";
+    }
     if (to.meta.requiresAdmin && !auth.isAdmin) return "/dashboard";
-    if (to.meta.requiresStaff && !auth.isStaff) return "/dashboard";
+    // 定向通知：需 msg.notify.send（admin 直接通过）；内部公告在页内再按 admin 收口
+    if (to.meta.requiresNotify && !canSendNotify(auth)) return "/dashboard";
+    // 申诉工作台：admin 可看全部，staff 需 moderation.mute（只有禁言申诉）
+    if (to.meta.requiresMute && !canHandleAppeals(auth)) return "/dashboard";
+    // 处罚记录：封禁列表仅 admin；禁言列表需 moderation.mute
+    if (
+        to.meta.requiresMuteOrBan &&
+        !auth.isAdmin &&
+        !auth.can("moderation.mute")
+    ) {
+        return "/dashboard";
+    }
     return true;
 });
+
+function canHandleAppeals(auth) {
+    return auth.isAdmin || auth.can("moderation.mute");
+}
+
+function canSendNotify(auth) {
+    return auth.isAdmin || auth.can("msg.notify.send");
+}

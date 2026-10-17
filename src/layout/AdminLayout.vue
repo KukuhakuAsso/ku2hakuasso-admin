@@ -25,11 +25,20 @@
         <el-menu-item v-if="canMsgWorkbench" index="/messages">
           <el-icon><ChatDotRound /></el-icon><span>站内信工作台</span>
         </el-menu-item>
+        <el-menu-item v-if="canNotify" index="/notify">
+          <el-icon><Promotion /></el-icon><span>定向通知</span>
+        </el-menu-item>
         <el-menu-item v-if="auth.can('msg.hint.handle')" index="/hints">
           <el-icon><QuestionFilled /></el-icon><span>提示工作台</span>
         </el-menu-item>
         <el-menu-item v-if="auth.can('msg.announce.publish')" index="/announcements">
           <el-icon><Bell /></el-icon><span>公告</span>
+        </el-menu-item>
+        <el-menu-item v-if="canHandleAppeals" index="/appeals">
+          <el-icon><ChatLineSquare /></el-icon><span>申诉工作台</span>
+        </el-menu-item>
+        <el-menu-item v-if="canViewPunishments" index="/punishments">
+          <el-icon><Warning /></el-icon><span>处罚记录</span>
         </el-menu-item>
         <el-sub-menu index="progress-group">
           <template #title>
@@ -93,6 +102,16 @@ const currentTitle = computed(() => route.meta.title || document.title);
 // 站内信工作台：有反馈处理权限看全部频道，只有公告权限时后端只返回公告
 const canMsgWorkbench = computed(
     () => auth.can("msg.feedback.handle") || auth.can("msg.announce.publish"),
+);
+// 定向通知（POST /admin/msg/notify）：需 msg.notify.send；内部公告仅 admin（页内收口）
+const canNotify = computed(() => auth.isAdmin || auth.can("msg.notify.send"));
+// 申诉工作台：admin 看全部，staff 需 moderation.mute（只有禁言申诉）
+const canHandleAppeals = computed(
+    () => auth.isAdmin || auth.can("moderation.mute"),
+);
+// 处罚记录：封禁列表仅 admin；禁言列表需 moderation.mute
+const canViewPunishments = computed(
+    () => auth.isAdmin || auth.can("moderation.mute"),
 );
 
 async function onLogout() {

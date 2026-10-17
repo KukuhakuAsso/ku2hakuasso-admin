@@ -68,16 +68,17 @@ import { ElMessage } from "element-plus";
 import { getProgressMatrix } from "@/api/progress";
 import { fmtTime, TEAM_STATUS, statusMeta } from "@/utils/format";
 
-// 状态取值见 api-9-admin.md §9.5：matrix 缺省或传空表示 1（只看正常队伍），
+// 状态取值见 api-9-admin.md：matrix 缺省按「只看正常队伍（2）」处理，
 // 要拿全量必须显式传 0（与 /progress/teams 的缺省语义不同）
 const STATUS_OPTIONS = [
-    { value: 1, label: "正常队伍" },
-    { value: 2, label: "已解散" },
-    { value: 3, label: "已封禁" },
+    { value: 2, label: "正常队伍" },
+    { value: 3, label: "已禁言" },
+    { value: 4, label: "已封禁" },
+    { value: 1, label: "已解散" },
     { value: 0, label: "全部队伍" },
 ];
 
-const filters = reactive({ status: 1, limit_teams: 200 });
+const filters = reactive({ status: 2, limit_teams: 200 });
 const loading = ref(false);
 const teams = ref([]);
 const puzzles = ref([]);

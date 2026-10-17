@@ -45,6 +45,14 @@ export const useAuthStore = defineStore("auth", {
             this.account = account || null;
             setStoredAccount(account);
         },
+        // 注册接口（/auth/reg/verify）已下发令牌与账号快照，直接采用，不再调一次登录接口
+        adoptSession({ access_token, account }) {
+            if (!access_token) return;
+            beginNewSession();
+            this.token = access_token;
+            setToken(access_token);
+            this.applyAccount(account || null);
+        },
         // 还原 / 刷新会话时取一次最新权限：刷新令牌的响应带 account.permissions，
         // 权限每次请求实时判定，这里负责让界面跟上（撤销或新增都能立即反映）。
         async syncAccount() {
