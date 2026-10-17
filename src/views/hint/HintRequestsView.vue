@@ -12,6 +12,52 @@
     </div>
 
     <el-table v-loading="loading" :data="list" border stripe>
+      <!-- 展开行：问题全文、staff 自己写下的答复（draftReply）与各阶段时间，方便回看核对 -->
+      <el-table-column type="expand">
+        <template #default="{ row }">
+          <div class="expand">
+            <div class="expand-block">
+              <span class="expand-label">问题</span>
+              <p class="expand-text">{{ row.question || "—" }}</p>
+            </div>
+            <div class="expand-block">
+              <span class="expand-label">
+                答复（只存服务端，玩家确认扣费后才送达）
+              </span>
+              <p class="expand-text">{{ row.draftReply || "—" }}</p>
+            </div>
+            <el-descriptions :column="3" size="small" border>
+              <el-descriptions-item label="实际扣费">
+                {{ row.cost ?? "—" }}
+              </el-descriptions-item>
+              <el-descriptions-item label="报价时间">
+                {{ fmtTime(row.quotedAt) }}
+              </el-descriptions-item>
+              <el-descriptions-item label="报价人">
+                {{ row.quotedBy || "—" }}
+              </el-descriptions-item>
+              <el-descriptions-item label="申请降价">
+                {{ fmtTime(row.cheaperRequestedAt) }}
+              </el-descriptions-item>
+              <el-descriptions-item label="回应降价">
+                {{ fmtTime(row.cheaperDecidedAt) }}
+              </el-descriptions-item>
+              <el-descriptions-item label="是否最低报价">
+                {{ row.isLowestPrice ? "是" : "否" }}
+              </el-descriptions-item>
+              <el-descriptions-item label="确认扣费">
+                {{ fmtTime(row.confirmedAt) }}
+              </el-descriptions-item>
+              <el-descriptions-item label="结束时间">
+                {{ fmtTime(row.decidedAt) }}
+              </el-descriptions-item>
+              <el-descriptions-item label="答复消息 ID">
+                {{ row.replyMsgId ?? "—" }}
+              </el-descriptions-item>
+            </el-descriptions>
+          </div>
+        </template>
+      </el-table-column>
       <el-table-column prop="id" label="ID" width="70" />
       <el-table-column label="队伍" min-width="130">
         <template #default="{ row }">{{ row.teamName || "—" }}（#{{ row.teamId }}）</template>
@@ -126,7 +172,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, reactive, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { useAuthStore } from "@/stores/auth";
 import {
@@ -180,13 +226,14 @@ function waitTime(createdAt) {
     return `${h} 小时 ${m % 60} 分`;
 }
 
-// 议价标记：申请降价（未回应）> 已回应降价 > 已是最低价，三者只显示其一
+// 议价标记：待回应（申请降价）> 已是最低价 > 已降价回应，三者只显示其一。
+// 拒绝降价会同时写 cheaperDecidedAt 与 isLowestPrice，所以 isLowestPrice 要先判。
 function cheaperMeta(row) {
     if (row.cheaperRequestedAt && !row.cheaperDecidedAt) {
         return { label: "申请降价", type: "warning" };
     }
-    if (row.cheaperDecidedAt) return { label: "已回应降价", type: "info" };
     if (row.isLowestPrice) return { label: "已是最低价", type: "success" };
+    if (row.cheaperDecidedAt) return { label: "已降价回应", type: "info" };
     return null;
 }
 
@@ -325,7 +372,37 @@ async function rejectRow(row) {
     }
 }
 
-onMounted(() => first());
+// 工作台每 15 秒自动刷新一次：新提问要能自己冒出来，不用手动点「查询」。
+// 只在第一页（first() 会重置游标栈与页码）、没有请求在跑、没有开着报价对话框时刷新，
+// 避免打断正在填报价或翻旧记录的操作员。
+const POLL_INTERVAL_MS = 15000;
+let pollTimer = null;
+
+function startPolling() {
+    stopPolling();
+    pollTimer = setInterval(() => {
+        if (document.hidden) return;
+        if (formDialog.visible) return;
+        if (page.value !== 1 || loading.value) return;
+        first().catch(() => {
+            // 轮询失败不打扰，下一轮再试
+        });
+    }, POLL_INTERVAL_MS);
+}
+
+function stopPolling() {
+    if (pollTimer) {
+        clearInterval(pollTimer);
+        pollTimer = null;
+    }
+}
+
+onMounted(() => {
+    first().catch((err) => ElMessage.error(err.message));
+    startPolling();
+});
+
+onBeforeUnmount(stopPolling);
 </script>
 
 <style scoped>
@@ -344,5 +421,26 @@ onMounted(() => first());
 }
 .dialog-alert {
     margin-bottom: 12px;
+}
+.expand {
+    padding: 4px 12px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+.expand-block {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+.expand-label {
+    font-size: 12px;
+    color: #909399;
+}
+.expand-text {
+    margin: 0;
+    font-size: 13px;
+    white-space: pre-wrap;
+    word-break: break-word;
 }
 </style>

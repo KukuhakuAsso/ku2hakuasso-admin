@@ -6,6 +6,7 @@ import {
     clearSession,
     getStoredAccount,
     setStoredAccount,
+    beginNewSession,
     refreshSession,
 } from "@/api/http";
 
@@ -32,6 +33,8 @@ export const useAuthStore = defineStore("auth", {
     actions: {
         async login(payload) {
             const data = await apiLogin(payload);
+            // 新会话代次：还在路上的旧刷新（启动还原 / 上一个账号的 401 刷新）结果作废
+            beginNewSession();
             this.token = data.access_token;
             setToken(data.access_token);
             this.applyAccount(data.account);
