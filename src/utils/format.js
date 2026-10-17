@@ -88,6 +88,8 @@ export const MAIL_SOURCE = {
 export const MAIL_CHANNEL_OPTIONS = [
     { value: "", label: "全部频道" },
     { value: "system", label: "官方公告" },
+    // 管理级内部公告：仅 staff / admin 可见（POST /admin/msg/internal-announce）
+    { value: "internal", label: "内部公告" },
     { value: "account", label: "与官方的联系" },
     { value: "team", label: "队伍会话" },
 ];
@@ -111,6 +113,8 @@ export const AUDIT_ACTIONS = {
     "team.dissolve": "强制解散队伍",
     "msg.reply": "后台回复",
     "msg.announce": "发布公告",
+    "msg.notify": "定向发送通知",
+    "msg.internal_announce": "发布内部公告",
     "msg.ban": "禁言",
     "msg.unban": "解除禁言",
     "appeal.reply": "回复申诉",

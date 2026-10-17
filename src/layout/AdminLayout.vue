@@ -25,6 +25,9 @@
         <el-menu-item v-if="canMsgWorkbench" index="/messages">
           <el-icon><ChatDotRound /></el-icon><span>站内信工作台</span>
         </el-menu-item>
+        <el-menu-item v-if="canNotify" index="/notify">
+          <el-icon><Promotion /></el-icon><span>定向通知</span>
+        </el-menu-item>
         <el-menu-item v-if="auth.can('msg.hint.handle')" index="/hints">
           <el-icon><QuestionFilled /></el-icon><span>提示工作台</span>
         </el-menu-item>
@@ -100,6 +103,8 @@ const currentTitle = computed(() => route.meta.title || document.title);
 const canMsgWorkbench = computed(
     () => auth.can("msg.feedback.handle") || auth.can("msg.announce.publish"),
 );
+// 定向通知（POST /admin/msg/notify）：需 msg.notify.send；内部公告仅 admin（页内收口）
+const canNotify = computed(() => auth.isAdmin || auth.can("msg.notify.send"));
 // 申诉工作台：admin 看全部，staff 需 moderation.mute（只有禁言申诉）
 const canHandleAppeals = computed(
     () => auth.isAdmin || auth.can("moderation.mute"),

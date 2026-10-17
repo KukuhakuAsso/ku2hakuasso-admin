@@ -22,6 +22,22 @@ export const announce = (body) => post("/admin/msg/announce", body);
 export const listAnnouncements = (params) =>
     get("/admin/msg/announcements", params);
 
+// ---------- 定向通知（2026-10-17 起，迁移 0027） ----------
+
+// 向指定接收人发信：{ account_ids?, team_ids?, subject(1..80), content(1..2000), allow_reply? }
+// 两个列表至少一个非空，去重后合计 ≤ 50；每位收件人各得一封根邮件（来源 notice，发送者是操作者）。
+// allow_reply 默认 true；队伍收件人恒为「仅通知」，该字段只对账号生效。
+// 201 → { sent, count, mails: [{ type, id, mailId }] }
+export const notifyTargets = (body) => post("/admin/msg/notify", body);
+
+// ---------- 内部公告（仅 admin，2026-10-17 起） ----------
+
+// 发布管理级内部公告：{ subject(1..80), content(1..2000) }
+// 只向 staff / admin 广播（channel=internal，只读、canReply=false），玩家侧不可见。
+// 201 → { announced, threadId, msgId, createdAt }；历史用 GET /admin/msg/mails?channel=internal
+export const publishInternalAnnounce = (body) =>
+    post("/admin/msg/internal-announce", body);
+
 // ---------- 权限与权限组（admin） ----------
 
 export const listPermissions = () => get("/admin/permissions");

@@ -36,6 +36,14 @@ const routes = [
                 component: () => import("@/views/msg/MsgThreadsView.vue"),
             },
             {
+                // 定向通知（msg.notify.send）+ 内部公告（admin）：
+                // 发信人可在 /messages 里看到自己发出的通知与回复
+                path: "notify",
+                name: "notify",
+                component: () => import("@/views/msg/NotifyView.vue"),
+                meta: { requiresNotify: true },
+            },
+            {
                 path: "hints",
                 name: "hints",
                 component: () => import("@/views/hint/HintRequestsView.vue"),
@@ -146,6 +154,8 @@ router.beforeEach((to) => {
         return "/login";
     }
     if (to.meta.requiresAdmin && !auth.isAdmin) return "/dashboard";
+    // 定向通知：需 msg.notify.send（admin 直接通过）；内部公告在页内再按 admin 收口
+    if (to.meta.requiresNotify && !canSendNotify(auth)) return "/dashboard";
     // 申诉工作台：admin 可看全部，staff 需 moderation.mute（只有禁言申诉）
     if (to.meta.requiresMute && !canHandleAppeals(auth)) return "/dashboard";
     // 处罚记录：封禁列表仅 admin；禁言列表需 moderation.mute
@@ -161,4 +171,8 @@ router.beforeEach((to) => {
 
 function canHandleAppeals(auth) {
     return auth.isAdmin || auth.can("moderation.mute");
+}
+
+function canSendNotify(auth) {
+    return auth.isAdmin || auth.can("msg.notify.send");
 }
