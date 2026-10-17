@@ -139,10 +139,11 @@ async function loadRule() {
 const grant = reactive({ team_id: null, delta: 0, note: "", idem_key: "", loading: false });
 
 // 队伍下拉：只列正常队伍（status=1）——已解散 / 已封禁的队伍不参与发放。
-// GET /admin/teams 只支持 status/cursor/limit（没有 keyword），
-// 所以按游标取前几页（500 队上限与通过矩阵一致），下拉本身做本地过滤。
+// GET /admin/teams 只支持 status/cursor/limit（没有 keyword），所以翻到 hasMore=false
+// 为止把正常队伍全部载入，下拉做本地过滤；游标去重 + 计数上限只用于防异常死循环，
+// 不会因为队伍多就截断（旧版固定 5 页会漏掉第 500 个之后的队伍）。
 const TEAM_PAGE_LIMIT = 100;
-const MAX_TEAM_PAGES = 5;
+const MAX_TEAM_PAGES = 1000;
 const teamOptions = ref([]);
 const teamLoading = ref(false);
 
@@ -152,6 +153,8 @@ async function loadTeams() {
     teamLoading.value = true;
     try {
         const items = [];
+        const seenIds = new Set();
+        const seenCursors = new Set();
         let cursor;
         for (let page = 0; page < MAX_TEAM_PAGES; page += 1) {
             const data = await listTeams({
@@ -159,8 +162,15 @@ async function loadTeams() {
                 cursor,
                 limit: TEAM_PAGE_LIMIT,
             });
-            items.push(...(data?.items || []));
+            for (const item of data?.items || []) {
+                if (seenIds.has(item.id)) continue;
+                seenIds.add(item.id);
+                items.push(item);
+            }
             if (!data?.hasMore || !data?.nextCursor) break;
+            // 游标没有前进就停，避免服务端异常时死循环
+            if (seenCursors.has(data.nextCursor)) break;
+            seenCursors.add(data.nextCursor);
             cursor = data.nextCursor;
         }
         teamOptions.value = items;
