@@ -10,6 +10,7 @@
       />
       <el-select v-model="filters.status" placeholder="状态" style="width: 140px" clearable>
         <el-option label="正常" :value="2" />
+        <el-option label="已禁言" :value="3" />
         <el-option label="已封禁" :value="4" />
       </el-select>
       <el-select v-model="filters.role" placeholder="角色" style="width: 140px" clearable>
@@ -45,7 +46,18 @@
       <el-table-column label="联系方式" min-width="160">
         <template #default="{ row }">{{ pick(row, "contact") || "（脱敏）" }}</template>
       </el-table-column>
-      <el-table-column label="操作" width="420" fixed="right">
+      <el-table-column label="禁言" width="170">
+        <template #default="{ row }">
+          <template v-if="muteRecord(row.id)">
+            <el-tag type="warning" size="small">
+              {{ muteRecord(row.id).until ? "限时禁言" : "永久禁言" }}
+            </el-tag>
+            <div class="sub">{{ muteRecord(row.id).reason || "—" }}</div>
+          </template>
+          <span v-else>—</span>
+        </template>
+      </el-table-column>
+      <el-table-column label="操作" width="480" fixed="right">
         <template #default="{ row }">
           <el-button v-if="auth.isAdmin" size="small" text type="primary" @click="showContact(row)">
             联系方式
@@ -75,11 +87,30 @@
           >
             {{ pick(row, "status") === 4 ? "解封" : "封禁" }}
           </el-button>
+          <!-- 禁言与封禁是两套处罚：禁言只拦发信，走权限码 moderation.mute；
+               已封禁的目标后端会 409，这里直接禁用按钮 -->
+          <el-button
+            v-if="auth.can('moderation.mute')"
+            size="small"
+            text
+            :disabled="pick(row, 'status') === 4"
+            :type="muteRecord(row.id) ? 'success' : 'warning'"
+            :title="pick(row, 'status') === 4 ? '已封禁，请先解封再禁言' : ''"
+            @click="toggleMute(row)"
+          >
+            {{ muteRecord(row.id) ? "解除禁言" : "禁言" }}
+          </el-button>
         </template>
       </el-table-column>
     </el-table>
 
     <PageNav :page="page" :has-more="hasMore" :loading="loading" @prev="prev" @next="next" />
+
+    <MuteDialog
+      v-model="muteDialog.visible"
+      :target="muteDialog.target"
+      @done="first"
+    />
 
     <!-- 封禁对话框 -->
     <el-dialog v-model="banDialog.visible" title="封禁玩家" width="420px">
@@ -137,7 +168,9 @@ import {
     renamePlayer,
 } from "@/api/players";
 import { useCursorPage } from "@/composables/useCursorPage";
+import { useMuteActions } from "@/composables/useMuteActions";
 import PageNav from "@/components/PageNav.vue";
+import MuteDialog from "@/components/MuteDialog.vue";
 import { pick, fmtTime, ACCOUNT_STATUS, statusMeta } from "@/utils/format";
 
 const auth = useAuthStore();
@@ -148,6 +181,25 @@ const fetcher = (cursor) =>
     listPlayers({ ...filters, cursor, limit: 50 });
 
 const { list, page, hasMore, loading, first, next, prev } = useCursorPage(fetcher);
+
+// 禁言 / 解除禁言（账号级）：需要 moderation.mute 权限码。
+// 禁言状态以 GET /admin/mutes（status=active）为准，前端不自己记账。
+const {
+    muteDialog,
+    muteOf: muteRecord,
+    openMute,
+    unmute,
+    refreshMutes,
+} = useMuteActions("account", first);
+
+function toggleMute(row) {
+    const label = pick(row, "username") || pick(row, "playerNo") || `#${row.id}`;
+    if (muteRecord(row.id)) {
+        unmute(row, label);
+    } else {
+        openMute(row, label);
+    }
+}
 
 function search() {
     first();
@@ -170,17 +222,28 @@ function openBan(row) {
 }
 
 async function submitBan() {
-    if (!banDialog.reason.trim()) {
-        ElMessage.warning("请填写封禁原因");
+    const reason = banDialog.reason.trim();
+    if (!reason) {
+        ElMessage.warning("请填写封禁原因（1–200 字）");
+        return;
+    }
+    if (banDialog.until && new Date(banDialog.until).getTime() <= Date.now()) {
+        ElMessage.warning("封禁到期时间必须晚于当前时间");
         return;
     }
     banDialog.loading = true;
     try {
-        const until = banDialog.until ? new Date(banDialog.until).toISOString() : undefined;
-        await banPlayer(banDialog.row.id, { reason: banDialog.reason.trim(), ...(until ? { until } : {}) });
-        ElMessage.success("已封禁");
+        const until = banDialog.until ? new Date(banDialog.until).toISOString() : null;
+        const data = await banPlayer(banDialog.row.id, { reason, until });
+        ElMessage.success(
+            data?.overwrote === "mute"
+                ? "已封禁；原禁言已被本次封禁覆盖（解封后不恢复）"
+                : "已封禁",
+        );
         banDialog.visible = false;
         first();
+        // 封禁会覆盖禁言，禁言列表需要跟着刷新
+        refreshMutes();
     } catch (err) {
         ElMessage.error(err.message);
     } finally {
@@ -197,8 +260,10 @@ async function toggleBan(row) {
         }
         try {
             await unbanPlayer(row.id);
-            ElMessage.success("已解封");
+            // 解封不会恢复被封禁覆盖的原禁言，但玩家状态变了，刷新一下
+            ElMessage.success("已解封（被封禁覆盖的原禁言不会恢复）");
             first();
+            refreshMutes();
         } catch (err) {
             ElMessage.error(err.message);
         }
@@ -294,7 +359,13 @@ function openPermissions(row) {
     router.push({ name: "permissions", query: { account_id: row.id } });
 }
 
-onMounted(() => first());
+onMounted(() => {
+    first();
+    // 禁言状态来自服务端列表（无 moderation.mute 时后端会 403，静默忽略）
+    if (auth.can("moderation.mute")) {
+        refreshMutes();
+    }
+});
 </script>
 
 <style scoped>
@@ -305,5 +376,9 @@ onMounted(() => first());
     padding: 12px;
     border-radius: 4px;
     font-size: 13px;
+}
+.sub {
+    color: var(--el-text-color-secondary);
+    font-size: 12px;
 }
 </style>

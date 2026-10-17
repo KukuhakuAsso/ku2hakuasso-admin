@@ -1,11 +1,13 @@
 <template>
   <div class="page-card">
     <div class="filter-bar">
-      <el-select v-model="filters.status" placeholder="状态（默认正常）" style="width: 160px">
-        <el-option label="全部" :value="0" />
-        <el-option label="正常" :value="1" />
-        <el-option label="已解散" :value="2" />
-        <el-option label="已封禁" :value="3" />
+      <el-select v-model="filters.status" placeholder="状态（默认全部）" style="width: 160px">
+        <el-option
+          v-for="opt in TEAM_STATUS_OPTIONS"
+          :key="opt.value"
+          :label="opt.label"
+          :value="opt.value"
+        />
       </el-select>
       <el-button type="primary" @click="search">查询</el-button>
       <el-button @click="reset">重置</el-button>
@@ -36,39 +38,85 @@
       <el-table-column label="确认参赛" width="170">
         <template #default="{ row }">{{ fmtTime(row.confirmedAt) }}</template>
       </el-table-column>
-      <el-table-column label="操作" width="330" fixed="right">
+      <el-table-column label="禁言" width="170">
+        <template #default="{ row }">
+          <template v-if="muteRecord(row.id)">
+            <el-tag type="warning" size="small">
+              {{ muteRecord(row.id).until ? "限时禁言" : "永久禁言" }}
+            </el-tag>
+            <div class="sub">{{ muteRecord(row.id).reason || "—" }}</div>
+          </template>
+          <span v-else>—</span>
+        </template>
+      </el-table-column>
+      <el-table-column label="操作" width="420" fixed="right">
         <template #default="{ row }">
           <template v-if="auth.isAdmin">
-            <el-button size="small" text type="warning" :disabled="row.status === 2" @click="warnRow(row)">
+            <el-button
+              size="small"
+              text
+              type="warning"
+              :disabled="isDissolved(row)"
+              @click="warnRow(row)"
+            >
               警告
             </el-button>
-            <el-button size="small" text type="primary" @click="renameRow(row)">改名</el-button>
             <el-button
-              v-if="row.status !== 3"
+              size="small"
+              text
+              type="primary"
+              :disabled="isDissolved(row)"
+              @click="renameRow(row)"
+            >
+              改名
+            </el-button>
+            <el-button
+              v-if="!isBanned(row)"
               size="small"
               text
               type="danger"
-              :disabled="row.status === 2"
+              :disabled="isDissolved(row)"
               @click="openBan(row)"
             >
               封禁
             </el-button>
-            <el-button v-else size="small" text type="success" @click="unbanRow(row)">解封</el-button>
+            <el-button v-else size="small" text type="success" @click="unbanRow(row)">
+              解封
+            </el-button>
             <el-button
               size="small"
               text
               type="danger"
-              :disabled="row.status !== 1"
+              :disabled="isDissolved(row) || isBanned(row)"
               @click="dissolveRow(row)"
             >
               解散
             </el-button>
           </template>
+          <!-- 队伍级禁言：只拦该队成员发信，与封禁（status=4）是两套处罚；
+               已解散（1）没有主体、已封禁（4）后端会 409，这里禁用 -->
+          <el-button
+            v-if="auth.can('moderation.mute')"
+            size="small"
+            text
+            :disabled="isDissolved(row) || isBanned(row)"
+            :type="muteRecord(row.id) ? 'success' : 'warning'"
+            :title="isBanned(row) ? '已封禁，请先解封再禁言' : ''"
+            @click="toggleMute(row)"
+          >
+            {{ muteRecord(row.id) ? "解除禁言" : "禁言" }}
+          </el-button>
         </template>
       </el-table-column>
     </el-table>
 
     <PageNav :page="page" :has-more="hasMore" :loading="loading" @prev="prev" @next="next" />
+
+    <MuteDialog
+      v-model="muteDialog.visible"
+      :target="muteDialog.target"
+      @done="first"
+    />
 
     <!-- 封禁对话框 -->
     <el-dialog v-model="banDialog.visible" title="封禁队伍" width="420px">
@@ -106,14 +154,39 @@ import {
     dissolveTeam,
 } from "@/api/teams";
 import { useCursorPage } from "@/composables/useCursorPage";
+import { useMuteActions } from "@/composables/useMuteActions";
 import PageNav from "@/components/PageNav.vue";
-import { fmtTime, TEAM_STATUS, statusMeta } from "@/utils/format";
+import MuteDialog from "@/components/MuteDialog.vue";
+import { fmtTime, TEAM_STATUS, TEAM_STATUS_OPTIONS, statusMeta } from "@/utils/format";
 
 const auth = useAuthStore();
 const filters = reactive({ status: 0 });
 
 const fetcher = (cursor) => listTeams({ ...filters, cursor, limit: 50 });
 const { list, page, hasMore, loading, first, next, prev } = useCursorPage(fetcher);
+
+// 队伍状态码与账号口径一致：1=已解散（读侧当不存在）、2=正常、3=禁言、4=封禁
+const isDissolved = (row) => Number(row?.status) === 1;
+const isBanned = (row) => Number(row?.status) === 4;
+
+// 禁言 / 解除禁言（队伍级）：需要 moderation.mute 权限码。
+// 禁言状态以 GET /admin/mutes（status=active）为准，前端不自己记账。
+const {
+    muteDialog,
+    muteOf: muteRecord,
+    openMute,
+    unmute,
+    refreshMutes,
+} = useMuteActions("team", first);
+
+function toggleMute(row) {
+    const label = row.name || `队伍 #${row.id}`;
+    if (muteRecord(row.id)) {
+        unmute(row, label);
+    } else {
+        openMute(row, label);
+    }
+}
 
 function search() {
     first();
@@ -133,17 +206,28 @@ function openBan(row) {
 }
 
 async function submitBan() {
-    if (!banDialog.reason.trim()) {
-        ElMessage.warning("请填写封禁原因");
+    const reason = banDialog.reason.trim();
+    if (!reason) {
+        ElMessage.warning("请填写封禁原因（1–200 字）");
+        return;
+    }
+    if (banDialog.until && new Date(banDialog.until).getTime() <= Date.now()) {
+        ElMessage.warning("封禁到期时间必须晚于当前时间");
         return;
     }
     banDialog.loading = true;
     try {
-        const until = banDialog.until ? new Date(banDialog.until).toISOString() : undefined;
-        await banTeam(banDialog.row.id, { reason: banDialog.reason.trim(), ...(until ? { until } : {}) });
-        ElMessage.success("已封禁");
+        const until = banDialog.until ? new Date(banDialog.until).toISOString() : null;
+        const data = await banTeam(banDialog.row.id, { reason, until });
+        ElMessage.success(
+            data?.overwrote === "mute"
+                ? "已封禁；原禁言已被本次封禁覆盖（解封后不恢复）"
+                : "已封禁",
+        );
         banDialog.visible = false;
         first();
+        // 封禁会覆盖禁言，禁言列表需要跟着刷新
+        refreshMutes();
     } catch (err) {
         ElMessage.error(err.message);
     } finally {
@@ -159,8 +243,9 @@ async function unbanRow(row) {
     }
     try {
         await unbanTeam(row.id);
-        ElMessage.success("已解封");
+        ElMessage.success("已解封（被封禁覆盖的原禁言不会恢复）");
         first();
+        refreshMutes();
     } catch (err) {
         ElMessage.error(err.message);
     }
@@ -226,5 +311,18 @@ async function dissolveRow(row) {
     }
 }
 
-onMounted(() => first());
+onMounted(() => {
+    first();
+    // 禁言状态来自服务端列表（无 moderation.mute 时后端会 403，静默忽略）
+    if (auth.can("moderation.mute")) {
+        refreshMutes();
+    }
+});
 </script>
+
+<style scoped>
+.sub {
+    color: var(--el-text-color-secondary);
+    font-size: 12px;
+}
+</style>

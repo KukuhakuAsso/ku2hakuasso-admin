@@ -58,3 +58,6 @@ export const declineCheaperHint = (id) =>
 export const rejectHint = (id, body) =>
     post(`/admin/msg/hint/${id}/reject`, body);
 
+// 禁言 / 封禁 / 申诉已迁到 ./moderation.js（2026-10-17 重构：
+// 旧的 /admin/msg/ban|unban 与 /admin/appeals/:accountId/reply 路径已不存在）。
+

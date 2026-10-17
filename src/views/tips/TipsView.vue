@@ -43,7 +43,7 @@
                 />
               </el-select>
               <div class="hint">
-                只列正常队伍；已解散 / 已封禁的队伍不可发放。
+                只列正常队伍；已解散 / 已禁言 / 已封禁的队伍不可发放。
               </div>
             </el-form-item>
             <el-form-item label="变动量 delta" required>
@@ -138,7 +138,7 @@ async function loadRule() {
 
 const grant = reactive({ team_id: null, delta: 0, note: "", idem_key: "", loading: false });
 
-// 队伍下拉：只列正常队伍（status=1）——已解散 / 已封禁的队伍不参与发放。
+// 队伍下拉：只列正常队伍（status=2）——已解散 / 已禁言 / 已封禁的队伍不参与发放。
 // GET /admin/teams 只支持 status/cursor/limit（没有 keyword），所以翻到 hasMore=false
 // 为止把正常队伍全部载入，下拉做本地过滤；游标去重 + 计数上限只用于防异常死循环，
 // 不会因为队伍多就截断（旧版固定 5 页会漏掉第 500 个之后的队伍）。
@@ -158,7 +158,7 @@ async function loadTeams() {
         let cursor;
         for (let page = 0; page < MAX_TEAM_PAGES; page += 1) {
             const data = await listTeams({
-                status: 1,
+                status: 2,
                 cursor,
                 limit: TEAM_PAGE_LIMIT,
             });

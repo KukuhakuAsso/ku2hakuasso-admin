@@ -47,6 +47,21 @@ const routes = [
                     import("@/views/announce/AnnouncementsView.vue"),
             },
             {
+                // 申诉工作台：封禁申诉仅 admin，禁言申诉需 moderation.mute
+                path: "appeals",
+                name: "appeals",
+                component: () => import("@/views/appeals/AppealsView.vue"),
+                meta: { requiresMute: true },
+            },
+            {
+                // 处罚记录：禁言列表需 moderation.mute；封禁列表仅 admin（页内再按权限分页签）
+                path: "punishments",
+                name: "punishments",
+                component: () =>
+                    import("@/views/moderation/PunishmentsView.vue"),
+                meta: { requiresMuteOrBan: true },
+            },
+            {
                 path: "progress",
                 name: "progress",
                 component: () =>
@@ -131,5 +146,19 @@ router.beforeEach((to) => {
         return "/login";
     }
     if (to.meta.requiresAdmin && !auth.isAdmin) return "/dashboard";
+    // 申诉工作台：admin 可看全部，staff 需 moderation.mute（只有禁言申诉）
+    if (to.meta.requiresMute && !canHandleAppeals(auth)) return "/dashboard";
+    // 处罚记录：封禁列表仅 admin；禁言列表需 moderation.mute
+    if (
+        to.meta.requiresMuteOrBan &&
+        !auth.isAdmin &&
+        !auth.can("moderation.mute")
+    ) {
+        return "/dashboard";
+    }
     return true;
 });
+
+function canHandleAppeals(auth) {
+    return auth.isAdmin || auth.can("moderation.mute");
+}

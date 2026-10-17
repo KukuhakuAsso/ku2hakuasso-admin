@@ -35,17 +35,30 @@ export function fmtJson(v) {
     }
 }
 
-// 账号状态（文档明确：4=封禁；2 为正常，其余展示原始值）
+// 账号状态（2026-10-17 起统一口径）：1=已注销（读侧当不存在）、2=正常、3=禁言、4=封禁
 export const ACCOUNT_STATUS = {
+    1: { label: "已注销", type: "info" },
     2: { label: "正常", type: "success" },
+    3: { label: "已禁言", type: "warning" },
     4: { label: "已封禁", type: "danger" },
 };
 
+// 队伍状态（2026-10-17 起与账号口径对齐）：1=已解散（读侧当不存在）、2=正常、3=禁言、4=封禁
 export const TEAM_STATUS = {
-    1: { label: "正常", type: "success" },
-    2: { label: "已解散", type: "info" },
-    3: { label: "已封禁", type: "danger" },
+    1: { label: "已解散", type: "info" },
+    2: { label: "正常", type: "success" },
+    3: { label: "已禁言", type: "warning" },
+    4: { label: "已封禁", type: "danger" },
 };
+
+// 队伍筛选下拉的取值（0 = 全部，后端 status 缺省或 0 表示全部）
+export const TEAM_STATUS_OPTIONS = [
+    { value: 0, label: "全部" },
+    { value: 2, label: "正常" },
+    { value: 3, label: "已禁言" },
+    { value: 4, label: "已封禁" },
+    { value: 1, label: "已解散" },
+];
 
 // 提示工作台状态（两步报价：pending 待报价 → quoted 已报价 → answered 已答复）
 export const HINT_STATUS = {
@@ -64,6 +77,11 @@ export const MAIL_SOURCE = {
     announce: { label: "公告", type: "danger" },
     warn: { label: "官方警告", type: "danger" },
     system: { label: "系统消息", type: "info" },
+    // 2026-10-17 起：官方通知（notify 发送）与管理级内部公告之外的通知类邮件
+    notice: { label: "官方通知", type: "info" },
+    // 处罚申诉链：封禁 / 禁言的往来邮件（也出现在申诉工作台里）
+    appeal_ban: { label: "封禁申诉", type: "danger" },
+    appeal_mute: { label: "禁言申诉", type: "warning" },
 };
 
 // 频道筛选项（列表里的频道名以服务端返回的 channelName 为准，不要自己拼）
@@ -95,6 +113,7 @@ export const AUDIT_ACTIONS = {
     "msg.announce": "发布公告",
     "msg.ban": "禁言",
     "msg.unban": "解除禁言",
+    "appeal.reply": "回复申诉",
     "hint.quote": "提示报价",
     "hint.requote": "同意降价并改回答",
     "hint.decline_cheaper": "拒绝降价",
