@@ -1,21 +1,19 @@
 import { defineStore } from "pinia";
 import { apiLogin, apiLogout } from "@/api/auth";
-import { getToken, setToken, clearSession } from "@/api/http";
-
-const ACCOUNT_KEY = "admin_account";
-
-function loadAccount() {
-    try {
-        return JSON.parse(localStorage.getItem(ACCOUNT_KEY));
-    } catch {
-        return null;
-    }
-}
+import {
+    getToken,
+    setToken,
+    clearSession,
+    getStoredAccount,
+    setStoredAccount,
+    refreshSession,
+} from "@/api/http";
 
 export const useAuthStore = defineStore("auth", {
     state: () => ({
         token: getToken(),
-        account: loadAccount(),
+        // 登录 / 刷新时下发的账号快照（含 permissions），can() 都基于它
+        account: getStoredAccount(),
     }),
     getters: {
         isAuthenticated: (s) => !!s.token,
@@ -35,10 +33,23 @@ export const useAuthStore = defineStore("auth", {
         async login(payload) {
             const data = await apiLogin(payload);
             this.token = data.access_token;
-            this.account = data.account;
             setToken(data.access_token);
-            localStorage.setItem(ACCOUNT_KEY, JSON.stringify(data.account));
+            this.applyAccount(data.account);
             return data;
+        },
+        // 账号快照统一从这里写入：内存 + localStorage 一起更新
+        applyAccount(account) {
+            this.account = account || null;
+            setStoredAccount(account);
+        },
+        // 还原 / 刷新会话时取一次最新权限：刷新令牌的响应带 account.permissions，
+        // 权限每次请求实时判定，这里负责让界面跟上（撤销或新增都能立即反映）。
+        async syncAccount() {
+            if (!this.isAuthenticated) return null;
+            const data = await refreshSession();
+            if (data?.account) this.applyAccount(data.account);
+            else if (data?.token) this.token = data.token;
+            return data?.account || null;
         },
         async logout() {
             try {
