@@ -26,21 +26,63 @@
         <el-card v-if="auth.isAdmin" shadow="never">
           <template #header>发放 / 扣减提示点（队伍级）</template>
           <el-form label-width="110px">
-            <el-form-item label="队伍ID" required>
-              <el-input-number v-model="grant.team_id" :min="1" style="width: 100%" />
+            <el-form-item label="队伍" required>
+              <el-select
+                v-model="grant.team_id"
+                filterable
+                clearable
+                :loading="teamLoading"
+                placeholder="搜索正常队伍（队名 / 编号）"
+                style="width: 100%"
+              >
+                <el-option
+                  v-for="item in teamOptions"
+                  :key="item.id"
+                  :label="teamLabel(item)"
+                  :value="item.id"
+                />
+              </el-select>
+              <div class="hint">
+                只列正常队伍；已解散 / 已封禁的队伍不可发放。
+              </div>
             </el-form-item>
             <el-form-item label="变动量 delta" required>
-              <el-input-number v-model="grant.delta" style="width: 100%" />
-              <div class="hint">正数发放、负数扣减</div>
+              <el-input-number
+                v-model="grant.delta"
+                :precision="0"
+                :step="10"
+                style="width: 100%"
+              />
+              <div class="hint">非 0 整数，正数发放、负数扣减</div>
             </el-form-item>
             <el-form-item label="备注 note" required>
               <el-input v-model="grant.note" maxlength="200" show-word-limit />
             </el-form-item>
             <el-form-item label="幂等键">
-              <el-input v-model="grant.idem_key" placeholder="可选，强烈建议填写" />
+              <div class="idem-row">
+                <el-input
+                  :model-value="grant.idem_key"
+                  readonly
+                  placeholder="提交时自动生成"
+                />
+                <el-button
+                  v-if="grant.idem_key"
+                  size="small"
+                  text
+                  @click="grant.idem_key = ''"
+                >
+                  换新键
+                </el-button>
+              </div>
+              <div class="hint">
+                自动生成：同一笔失败重试复用同一个键（服务端只生效一次），
+                成功后自动重置；改动队伍 / 点数 / 备注会视为新的一笔。
+              </div>
             </el-form-item>
             <el-form-item>
-              <el-button type="primary" :loading="grant.loading" @click="submitGrant">执行</el-button>
+              <el-button type="primary" :loading="grant.loading" @click="submitGrant">
+                执行
+              </el-button>
             </el-form-item>
           </el-form>
         </el-card>
@@ -71,10 +113,11 @@
 </template>
 
 <script setup>
-import { onMounted, reactive, ref } from "vue";
-import { ElMessage } from "element-plus";
+import { onMounted, reactive, ref, watch } from "vue";
+import { ElMessage, ElMessageBox } from "element-plus";
 import { useAuthStore } from "@/stores/auth";
 import { grantTips, getTipsRule, putTipsRule } from "@/api/tips";
+import { listTeams } from "@/api/teams";
 
 const auth = useAuthStore();
 
@@ -95,28 +138,100 @@ async function loadRule() {
 
 const grant = reactive({ team_id: null, delta: 0, note: "", idem_key: "", loading: false });
 
+// 队伍下拉：只列正常队伍（status=1）——已解散 / 已封禁的队伍不参与发放。
+// GET /admin/teams 只支持 status/cursor/limit（没有 keyword），
+// 所以按游标取前几页（500 队上限与通过矩阵一致），下拉本身做本地过滤。
+const TEAM_PAGE_LIMIT = 100;
+const MAX_TEAM_PAGES = 5;
+const teamOptions = ref([]);
+const teamLoading = ref(false);
+
+const teamLabel = (item) => `${item.name || "（未命名）"}（#${item.id}）`;
+
+async function loadTeams() {
+    teamLoading.value = true;
+    try {
+        const items = [];
+        let cursor;
+        for (let page = 0; page < MAX_TEAM_PAGES; page += 1) {
+            const data = await listTeams({
+                status: 1,
+                cursor,
+                limit: TEAM_PAGE_LIMIT,
+            });
+            items.push(...(data?.items || []));
+            if (!data?.hasMore || !data?.nextCursor) break;
+            cursor = data.nextCursor;
+        }
+        teamOptions.value = items;
+    } catch (err) {
+        ElMessage.error(err.message);
+    } finally {
+        teamLoading.value = false;
+    }
+}
+
+// 幂等键：只代表「这一笔」。队伍 / 点数 / 备注一变就是新的一笔，键要作废；
+// 失败重试时保持同一个键（服务端据此只生效一次）。
+watch(
+    () => [grant.team_id, grant.delta, grant.note],
+    () => {
+        grant.idem_key = "";
+    },
+);
+
+function makeIdemKey(teamId) {
+    const rand = Math.random().toString(36).slice(2, 10);
+    return `grant-${teamId}-${Date.now().toString(36)}-${rand}`;
+}
+
 async function submitGrant() {
     if (!grant.team_id) {
-        ElMessage.warning("请填写队伍ID");
+        ElMessage.warning("请选择队伍");
+        return;
+    }
+    if (!Number.isInteger(grant.delta) || grant.delta === 0) {
+        ElMessage.warning("变动量必须是非 0 整数");
         return;
     }
     if (!grant.note.trim()) {
         ElMessage.warning("请填写备注");
         return;
     }
+
+    const team = teamOptions.value.find((item) => item.id === grant.team_id);
+    if (Math.abs(grant.delta) >= 1000) {
+        try {
+            await ElMessageBox.confirm(
+                `确认给「${teamLabel(team || { id: grant.team_id })}」${
+                    grant.delta > 0 ? "发放" : "扣减"
+                } ${Math.abs(grant.delta)} 点？该操作会记入审计且不可撤销。`,
+                "大额变动确认",
+                { type: "warning" },
+            );
+        } catch {
+            return;
+        }
+    }
+
+    if (!grant.idem_key) grant.idem_key = makeIdemKey(grant.team_id);
+
     grant.loading = true;
     try {
         const data = await grantTips({
             team_id: grant.team_id,
             delta: grant.delta,
             note: grant.note.trim(),
-            ...(grant.idem_key ? { idem_key: grant.idem_key } : {}),
+            idem_key: grant.idem_key,
         });
         ElMessage.success(`执行成功，当前余额：${data?.balance ?? "—"}`);
         if (data?.idempotent) {
             ElMessage.warning("幂等命中，未重复生效");
         }
+        // 这一笔已完成，下一笔必须用新键
+        grant.idem_key = "";
     } catch (err) {
+        // 失败时保留幂等键：可能是响应丢了而服务端已落库，重试同一笔不会重复发放
         ElMessage.error(err.message);
     } finally {
         grant.loading = false;
@@ -159,7 +274,10 @@ async function submitEditRule() {
     }
 }
 
-onMounted(() => loadRule());
+onMounted(() => {
+    loadRule();
+    if (auth.isAdmin) loadTeams();
+});
 </script>
 
 <style scoped>
@@ -175,5 +293,11 @@ onMounted(() => loadRule());
 }
 .rule-note {
     margin-top: 12px;
+}
+.idem-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
 }
 </style>

@@ -211,7 +211,10 @@ function startPolling() {
   stopPolling();
   pollTimer = setInterval(() => {
     if (drawer.visible) {
-      if (drawer.mailId) loadMessages();
+      // 详情请求还没回来就跳过这一轮：否则每轮都会把上一轮判为过期，
+      // 响应全被丢弃、loading 也永远清不掉（慢接口时抽屉会卡在骨架屏）。
+      // 手动「刷新」按钮不受这个限制。
+      if (drawer.mailId && !drawer.loading) loadMessages();
       return;
     }
 
