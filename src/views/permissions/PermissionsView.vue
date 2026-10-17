@@ -261,25 +261,37 @@ function onAccountChange(value) {
     if (value) loadAccount();
 }
 
-async function loadAccount() {
-    if (!accountId.value) return;
+// 账号详情请求的序号：只接受「最新一次请求且仍是同一个账号」的响应，
+// 避免切到 B 之后 A 的迟到响应让 grant/revoke 用 A 的授予状态、却作用到 B
+let accountSeq = 0;
 
+async function loadAccount() {
+    // 先记下这次要查的账号：响应回来时据此判断是否已被替换
+    const requestedId = accountId.value;
+    if (!requestedId) return;
+
+    const seq = ++accountSeq;
     accountLoading.value = true;
     try {
-        const data = await getAccountPermissions(accountId.value);
+        const data = await getAccountPermissions(requestedId);
+        // 已切到别的账号、或已有更新的请求 → 丢弃这次响应
+        if (seq !== accountSeq || requestedId !== accountId.value) return;
+
         account.value = data;
         // 深链进来时该账号可能不在 staff 列表里（如 admin / 玩家），补一条选项让下拉能显示它
-        if (!accountOptions.value.some((item) => pick(item, "id") === accountId.value)) {
+        if (!accountOptions.value.some((item) => pick(item, "id") === requestedId)) {
             accountOptions.value = [
-                { id: accountId.value, role: data?.role },
+                { id: requestedId, role: data?.role },
                 ...accountOptions.value,
             ];
         }
     } catch (err) {
+        // 被替换的请求失败不打扰操作员
+        if (seq !== accountSeq || requestedId !== accountId.value) return;
         account.value = null;
         ElMessage.error(err.message);
     } finally {
-        accountLoading.value = false;
+        if (seq === accountSeq) accountLoading.value = false;
     }
 }
 
@@ -291,6 +303,8 @@ async function toggleGroup(row) {
         return;
     }
 
+    // 记住点击时选中的账号：请求与后续副作用都只作用于它
+    const targetId = accountId.value;
     const verb = row.granted ? "撤销" : "授予";
     try {
         await ElMessageBox.confirm(
@@ -304,26 +318,34 @@ async function toggleGroup(row) {
         return;
     }
 
+    // 确认框开着的时候切了账号 → 不做这次操作，避免改到别的账号
+    if (targetId !== accountId.value) return;
+
     busyGroup.value = row.code;
     try {
         if (row.granted) {
-            const data = await revokePermissionGroup(accountId.value, row.code);
-            ElMessage.success(
-                data?.revoked
-                    ? `已撤销 ${groupName(row.code)}`
-                    : `该账号本就不属于 ${groupName(row.code)}`,
-            );
+            const data = await revokePermissionGroup(targetId, row.code);
+            if (targetId === accountId.value) {
+                ElMessage.success(
+                    data?.revoked
+                        ? `已撤销 ${groupName(row.code)}`
+                        : `该账号本就不属于 ${groupName(row.code)}`,
+                );
+            }
         } else {
-            const data = await grantPermissionGroup(accountId.value, row.code);
-            ElMessage.success(
-                data?.granted
-                    ? `已授予 ${groupName(row.code)}`
-                    : `该账号本就已授予 ${groupName(row.code)}`,
-            );
+            const data = await grantPermissionGroup(targetId, row.code);
+            if (targetId === accountId.value) {
+                ElMessage.success(
+                    data?.granted
+                        ? `已授予 ${groupName(row.code)}`
+                        : `该账号本就已授予 ${groupName(row.code)}`,
+                );
+            }
         }
-        await loadAccount();
+        // 期间切了账号就不再打扰当前账号的视图
+        if (targetId === accountId.value) await loadAccount();
     } catch (err) {
-        ElMessage.error(err.message);
+        if (targetId === accountId.value) ElMessage.error(err.message);
     } finally {
         busyGroup.value = "";
     }

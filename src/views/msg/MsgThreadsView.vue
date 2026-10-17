@@ -203,16 +203,24 @@ const drawer = reactive({
 const mail = ref(null);
 const messages = ref([]);
 
+// 详情请求的序号：只接受「最新一次请求且仍是同一封邮件」的响应，
+// 避免切到 B 之后 A 的迟到响应、或轮询与手动刷新的旧响应覆盖界面
+let detailSeq = 0;
+
 function startPolling() {
   stopPolling();
   pollTimer = setInterval(() => {
-    if (!drawer.visible) {
-      first();
+    if (drawer.visible) {
+      if (drawer.mailId) loadMessages();
       return;
     }
 
-    if (drawer.mailId) {
-      loadMessages();
+    // 列表：只在第一页自动刷新。first() 会把游标栈与页码重置到第 1 页，
+    // 操作员正在翻旧邮件时不能被每 10 秒拽回最新页；请求进行中也跳过，避免叠加。
+    if (page.value === 1 && !loading.value) {
+      first().catch(() => {
+        // 轮询失败不打扰操作员，下一轮会再试
+      });
     }
   }, POLL_INTERVAL_MS);
 }
@@ -245,11 +253,17 @@ async function openMail(row) {
 }
 
 async function loadMessages() {
-  if (!drawer.mailId) return;
+  // 先记下这次要请求的邮件：响应回来时据此判断是否已被替换
+  const requestedId = drawer.mailId;
+  if (!requestedId) return;
 
+  const seq = ++detailSeq;
   drawer.loading = true;
   try {
-    const data = await getMail(drawer.mailId);
+    const data = await getMail(requestedId);
+    // 已经切到别的邮件、或已有更新的请求 → 丢弃这次响应
+    if (seq !== detailSeq || requestedId !== drawer.mailId) return;
+
     mail.value = data?.mail || null;
     // 渲染顺序：mail（当前打开这封，时间最新）在前，replyChain 按服务端顺序
     //（时间倒序，最新祖先在前、链尾是根）跟在后面——旧信息排在时间新的正文之后。
@@ -260,9 +274,11 @@ async function loadMessages() {
     }
     messages.value.push(...chain);
   } catch (err) {
+    // 被替换的请求失败不打扰操作员
+    if (seq !== detailSeq || requestedId !== drawer.mailId) return;
     ElMessage.error(err.message);
   } finally {
-    drawer.loading = false;
+    if (seq === detailSeq) drawer.loading = false;
   }
 }
 
@@ -276,24 +292,28 @@ function senderName(msg) {
 async function sendReply() {
   if (!canReply.value || !drawer.content.trim()) return;
 
+  // 发到点发送时看到的那封邮件；之后即使切到别的邮件也不受影响
+  const targetId = drawer.mailId;
   drawer.sending = true;
   try {
-    await replyMail(drawer.mailId, { content: drawer.content.trim() });
+    await replyMail(targetId, { content: drawer.content.trim() });
     ElMessage.success("已回复");
-    drawer.content = "";
-    // 回复成功后自动关闭抽屉，回到列表并刷新（反映新回复与未读状态）
-    drawer.visible = false;
-    
-    first();
+    // 回复成功后自动关闭抽屉，回到列表并刷新（反映新回复与未读状态）；
+    // 期间已切到别的邮件时，不要清空正文或关掉当前这个抽屉
+    if (targetId === drawer.mailId) {
+      drawer.content = "";
+      drawer.visible = false;
+    }
+    first().catch((err) => ElMessage.error(err.message));
   } catch (err) {
-    ElMessage.error(err.message);
+    if (targetId === drawer.mailId) ElMessage.error(err.message);
   } finally {
     drawer.sending = false;
   }
 }
 
 onMounted(() => {
-  first();
+  first().catch((err) => ElMessage.error(err.message));
   startPolling();
 });
 

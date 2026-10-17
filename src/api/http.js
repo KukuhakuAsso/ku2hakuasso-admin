@@ -26,6 +26,23 @@ export function clearSession() {
     localStorage.removeItem("admin_account");
 }
 
+// 登录时保存的账号快照（含 permissions）。会话还原 / 刷新令牌后要用新快照覆盖它，
+// 否则被授予权限组的 staff 要等到重新登录才看得到新入口。
+const ACCOUNT_KEY = "admin_account";
+
+export function getStoredAccount() {
+    try {
+        return JSON.parse(localStorage.getItem(ACCOUNT_KEY));
+    } catch {
+        return null;
+    }
+}
+
+export function setStoredAccount(account) {
+    if (account) localStorage.setItem(ACCOUNT_KEY, JSON.stringify(account));
+    else localStorage.removeItem(ACCOUNT_KEY);
+}
+
 // 拼接查询参数（跳过空值）
 export function buildQuery(params = {}) {
     const usp = new URLSearchParams();
@@ -37,11 +54,12 @@ export function buildQuery(params = {}) {
     return qs ? `?${qs}` : "";
 }
 
-// 尽力刷新访问令牌：依赖 /api/auth 路径下的 httpOnly Cookie；
-// 代理未正确转发 Cookie 时静默失败，由调用方走登出流程。
+// 刷新访问令牌，并顺带取回最新的账号快照（POST /auth/refresh 的响应带 account.permissions）。
+// 依赖 /api/auth 路径下的 httpOnly Cookie；代理未正确转发 Cookie 时静默失败，由调用方走登出流程。
+// 每次刷新都会轮换令牌，因此并发调用复用同一个 Promise。
 let refreshing = null;
-async function tryRefresh() {
-    if (!getToken()) return false;
+export function refreshSession() {
+    if (!getToken()) return Promise.resolve(null);
     if (refreshing) return refreshing;
     refreshing = (async () => {
         try {
@@ -53,11 +71,21 @@ async function tryRefresh() {
             const j = await r.json().catch(() => null);
             if (r.ok && j?.data?.access_token) {
                 setToken(j.data.access_token);
-                return true;
+                const account = j.data.account || null;
+                if (account) {
+                    setStoredAccount(account);
+                    // 通知已在运行的 store 更新权限（页面不刷新也能看到新入口）
+                    window.dispatchEvent(
+                        new window.CustomEvent("admin:account-updated", {
+                            detail: account,
+                        }),
+                    );
+                }
+                return { token: j.data.access_token, account };
             }
-            return false;
+            return null;
         } catch {
-            return false;
+            return null;
         } finally {
             setTimeout(() => {
                 refreshing = null;
@@ -87,9 +115,9 @@ export async function request(path, { method = "GET", body } = {}) {
         // 非 JSON 响应
     }
 
-    // 令牌失效：先尝试刷新后重试一次
+    // 令牌失效：先尝试刷新后重试一次（刷新响应会带回最新的账号权限快照）
     if (res.status === 401) {
-        const refreshed = await tryRefresh();
+        const refreshed = await refreshSession();
         if (refreshed) {
             return request(path, { method, body });
         }
