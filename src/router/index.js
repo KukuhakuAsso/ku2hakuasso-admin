@@ -123,7 +123,13 @@ router.beforeEach((to) => {
         return true;
     }
     if (!auth.isAuthenticated) return "/login";
+    // 已知角色但不是 staff（如刚注册出来的玩家账号）：清掉后台会话回登录页。
+    // 否则把非 staff 送回 /dashboard 会与这条守卫自身形成死循环（页面全白）。
+    // 角色未知（仅有令牌、快照还没同步回来）时先放行，等接口或 syncAccount 给出结论。
+    if (auth.account && !auth.isStaff) {
+        auth.reset();
+        return "/login";
+    }
     if (to.meta.requiresAdmin && !auth.isAdmin) return "/dashboard";
-    if (to.meta.requiresStaff && !auth.isStaff) return "/dashboard";
     return true;
 });
