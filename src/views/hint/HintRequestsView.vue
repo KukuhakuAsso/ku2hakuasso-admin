@@ -11,7 +11,7 @@
       </span>
     </div>
 
-    <el-table v-loading="loading" :data="list" border stripe>
+    <el-table v-loading="loading" :data="list" row-key="id" border stripe>
       <!-- 展开行：问题全文、staff 自己写下的答复（draftReply）与各阶段时间，方便回看核对 -->
       <el-table-column type="expand">
         <template #default="{ row }">

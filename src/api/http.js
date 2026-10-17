@@ -117,9 +117,21 @@ export function refreshSession() {
     return refreshing;
 }
 
+// 请求所属的会话已被替换（登出 / 换账号）：只让这次请求失败，不触碰新会话
+function staleSessionError(json) {
+    return new ApiError(
+        401,
+        json?.error?.message || "登录状态已变化，请重新操作",
+        json?.error,
+    );
+}
+
 // 核心请求：返回响应体中的 data 字段；ok:false 或非 2xx 抛 ApiError。
 // retried 只由 401 分支内部使用：刷新令牌后只重试一次，避免「刷新成功但仍 401」时无限递归。
 export async function request(path, { method = "GET", body, retried = false } = {}) {
+    // 发请求时就记账次：响应（尤其 401）回来时若会话已经换了，
+    // 这次请求属于旧账号，不能拿它去刷新 / 清空新会话，也不能把它重放到新身份上。
+    const requestGeneration = sessionGeneration;
     const headers = getApiHeaders();
     const token = getToken();
     if (token) headers.Authorization = `Bearer ${token}`;
@@ -140,30 +152,30 @@ export async function request(path, { method = "GET", body, retried = false } = 
 
     // 令牌失效：先尝试刷新后重试一次（刷新响应会带回最新的账号权限快照）
     if (res.status === 401) {
-        const generation = sessionGeneration;
+        // 这次请求是在旧会话里发出的（期间登出 / 换账号）：
+        // 不刷新、不清空、也不重放，直接判失败
+        if (requestGeneration !== sessionGeneration) {
+            throw staleSessionError(json);
+        }
+
         // 已经刷新并重试过仍 401（令牌被撤销 / token_version 变了）→ 结束会话，不再递归
         if (retried) {
-            if (generation === sessionGeneration) {
-                clearSession();
-                window.dispatchEvent(new window.Event("admin:unauthorized"));
-            }
+            clearSession();
+            window.dispatchEvent(new window.Event("admin:unauthorized"));
             throw new ApiError(
                 401,
                 json?.error?.message || "未登录或令牌已失效",
                 json?.error,
             );
         }
+
         const refreshed = await refreshSession();
+        // 刷新期间又登出 / 换了账号 → 同样丢弃这次请求，别动新会话
+        if (requestGeneration !== sessionGeneration) {
+            throw staleSessionError(json);
+        }
         if (refreshed) {
             return request(path, { method, body, retried: true });
-        }
-        // 刷新期间已经登出或换成别的账号：不要动新会话，只把这次请求判失败
-        if (generation !== sessionGeneration) {
-            throw new ApiError(
-                401,
-                json?.error?.message || "登录状态已变化，请重新操作",
-                json?.error,
-            );
         }
         clearSession();
         window.dispatchEvent(new window.Event("admin:unauthorized"));
