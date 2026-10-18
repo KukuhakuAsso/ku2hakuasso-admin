@@ -69,10 +69,13 @@
             </el-tabs>
         </el-card>
 
+        <!-- destroy-on-close：面板内部持有 sentMessage / 令牌 / 密码等状态，
+             不销毁的话关掉再开（甚至换账号）会沿用上一次的流程状态 -->
         <el-dialog
             v-model="forgotOpen"
             title="找回密码"
             width="420px"
+            destroy-on-close
             @closed="onForgotClosed"
         >
             <ResetPasswordPanel
