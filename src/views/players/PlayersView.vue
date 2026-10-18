@@ -54,6 +54,10 @@
             </el-tag>
             <div class="sub">{{ muteRecord(row.id).reason || "—" }}</div>
           </template>
+          <!-- 列表被截断（>200 条生效禁言）且该行未能补齐：状态未知，不能当「未禁言」 -->
+          <el-tag v-else-if="muteState(row.id) === 'unknown'" type="info" size="small">
+            状态未知
+          </el-tag>
           <span v-else>—</span>
         </template>
       </el-table-column>
@@ -88,14 +92,14 @@
             {{ pick(row, "status") === 4 ? "解封" : "封禁" }}
           </el-button>
           <!-- 禁言与封禁是两套处罚：禁言只拦发信，走权限码 moderation.mute；
-               已封禁的目标后端会 409，这里直接禁用按钮 -->
+               已封禁的目标后端会 409，禁言状态未知时操作可能覆盖原处罚，均直接禁用 -->
           <el-button
             v-if="auth.can('moderation.mute')"
             size="small"
             text
-            :disabled="pick(row, 'status') === 4"
+            :disabled="Boolean(muteBlockedReason(row))"
             :type="muteRecord(row.id) ? 'success' : 'warning'"
-            :title="pick(row, 'status') === 4 ? '已封禁，请先解封再禁言' : ''"
+            :title="muteBlockedReason(row)"
             @click="toggleMute(row)"
           >
             {{ muteRecord(row.id) ? "解除禁言" : "禁言" }}
@@ -109,7 +113,7 @@
     <MuteDialog
       v-model="muteDialog.visible"
       :target="muteDialog.target"
-      @done="first"
+      @done="onMuteDone"
     />
 
     <!-- 封禁对话框 -->
@@ -187,10 +191,24 @@ const { list, page, hasMore, loading, first, next, prev } = useCursorPage(fetche
 const {
     muteDialog,
     muteOf: muteRecord,
+    muteState,
     openMute,
     unmute,
     refreshMutes,
-} = useMuteActions("account", first);
+} = useMuteActions("account", first, { rows: list });
+
+function muteBlockedReason(row) {
+    if (pick(row, "status") === 4) return "已封禁，请先解封再禁言";
+    if (muteState(row.id) === "unknown") {
+        return "禁言状态未知（生效禁言超过 200 条），已禁用以免覆盖原处罚，请重新查询后再试";
+    }
+    return "";
+}
+
+// 禁言成功后列表与禁言状态都要刷新，否则刚禁言的人仍显示「禁言」
+async function onMuteDone() {
+    await Promise.all([first(), refreshMutes()]);
+}
 
 function toggleMute(row) {
     const label = pick(row, "username") || pick(row, "playerNo") || `#${row.id}`;

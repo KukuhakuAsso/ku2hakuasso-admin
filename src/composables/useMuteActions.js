@@ -1,7 +1,7 @@
 // 禁言 / 解禁的界面状态（api-11-moderation-mute.md）。
 // 2026-10-17 重构后解禁按「目标」发起（players/:id/unmute、teams/:id/unmute），
 // 不再需要记录 ban_id；列表状态以 GET /admin/mutes 为准，前端不自己记账。
-import { computed, reactive, ref } from "vue";
+import { computed, reactive, ref, watch } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import {
     listMutes,
@@ -9,15 +9,46 @@ import {
     unmuteTeam,
 } from "@/api/moderation";
 
+// 列表单次最多返回 200 条且不分页，超出时 hasMore=true
+const LIST_LIMIT = 200;
+// 列表被截断时，按精确 id 补齐展示行的并发上限
+const LOOKUP_CONCURRENCY = 4;
+
 // kind: "account" | "team"
-export function useMuteActions(kind, onChanged = () => {}) {
+// rows: 表格当前展示的行（ref 数组）；列表被截断时用它决定要补齐哪些行
+export function useMuteActions(kind, onChanged = () => {}, { rows } = {}) {
     const muteDialog = reactive({ visible: false, target: null });
     // accountId / teamId → 生效中的禁言行
     const muted = ref(new Map());
+    // 已确认「未禁言」的 id（只在列表被截断时逐行查过才有记录）
+    const resolvedClear = ref(new Set());
+    // 列表是否被截断：为 true 时，既不在 muted 也不在 resolvedClear 的主体状态未知
+    const truncated = ref(false);
     const loading = ref(false);
+
+    const idParam = kind === "team" ? "team_id" : "account_id";
+    // 非响应式：正在查询的 id，避免同一行重复发请求
+    const inflight = new Set();
+    let visibleRows = [];
 
     function keyOf(id) {
         return String(id);
+    }
+
+    function idOf(row) {
+        return kind === "team" ? row?.teamId : row?.accountId;
+    }
+
+    function setRecord(key, row) {
+        const next = new Map(muted.value);
+        next.set(key, row);
+        muted.value = next;
+    }
+
+    function markClear(key) {
+        const next = new Set(resolvedClear.value);
+        next.add(key);
+        resolvedClear.value = next;
     }
 
     // 只取仍生效的禁言（status=active），一次最多 200 条，不分页
@@ -27,27 +58,105 @@ export function useMuteActions(kind, onChanged = () => {}) {
             const data = await listMutes({
                 target: kind,
                 status: "active",
-                limit: 200,
+                limit: LIST_LIMIT,
             });
             const items = Array.isArray(data?.items) ? data.items : [];
             const map = new Map();
             for (const row of items) {
-                const id =
-                    kind === "team" ? row.teamId : row.accountId;
+                const id = idOf(row);
                 if (id === null || id === undefined) continue;
                 if (row.active === false) continue;
                 map.set(keyOf(id), row);
             }
             muted.value = map;
+            // 还有没取回来的生效禁言：不能把这些主体当成「未禁言」
+            truncated.value = Boolean(data?.hasMore);
+            resolvedClear.value = new Set();
+            inflight.clear();
         } catch {
             // 读列表失败不阻断主流程：按钮退化为「禁言」，服务端仍会拦非法解禁
         } finally {
             loading.value = false;
         }
+        // 截断时补齐当前展示行，否则已禁言的目标会显示成「禁言」并覆盖原处罚
+        await resolveMutes(visibleRows);
+    }
+
+    // 列表被截断时，用精确 id 过滤补齐展示行：
+    // 缺失的行若直接当「未禁言」，点下去就是重复禁言（覆盖处罚并重置申诉额度）
+    async function resolveMutes(items) {
+        if (!truncated.value) return;
+
+        const queue = [];
+        for (const row of items || []) {
+            const id = row?.id;
+            if (id === null || id === undefined || id === "") continue;
+            const key = keyOf(id);
+            if (muted.value.has(key) || resolvedClear.value.has(key)) continue;
+            if (inflight.has(key)) continue;
+            queue.push({ key, id });
+        }
+        if (!queue.length) return;
+
+        let index = 0;
+        const worker = async () => {
+            while (index < queue.length) {
+                const { key, id } = queue[index];
+                index += 1;
+                inflight.add(key);
+                try {
+                    const data = await listMutes({
+                        target: kind,
+                        status: "active",
+                        [idParam]: id,
+                        limit: LIST_LIMIT,
+                    });
+                    const rows = Array.isArray(data?.items) ? data.items : [];
+                    const hit =
+                        rows.find(
+                            (item) =>
+                                keyOf(idOf(item)) === key &&
+                                item.active !== false,
+                        ) || null;
+                    if (hit) setRecord(key, hit);
+                    else markClear(key);
+                } catch {
+                    // 单行查询失败：保持「未知」，界面禁用操作，避免误覆盖
+                } finally {
+                    inflight.delete(key);
+                }
+            }
+        };
+        await Promise.all(
+            Array.from(
+                { length: Math.min(LOOKUP_CONCURRENCY, queue.length) },
+                worker,
+            ),
+        );
+    }
+
+    // "muted" | "clear" | "unknown"
+    function muteState(id) {
+        const key = keyOf(id);
+        if (muted.value.has(key)) return "muted";
+        if (resolvedClear.value.has(key)) return "clear";
+        return truncated.value ? "unknown" : "clear";
     }
 
     function muteOf(id) {
         return muted.value.get(keyOf(id)) || null;
+    }
+
+    // 表格换页 / 筛选后重新判定可见行的状态（只在截断时才会发请求）
+    if (rows) {
+        watch(
+            rows,
+            (value) => {
+                visibleRows = Array.isArray(value) ? value : [];
+                resolveMutes(visibleRows);
+            },
+            { immediate: true },
+        );
     }
 
     const mutedCount = computed(() => muted.value.size);
@@ -101,6 +210,7 @@ export function useMuteActions(kind, onChanged = () => {}) {
         loading,
         mutedCount,
         muteOf,
+        muteState,
         openMute,
         unmute,
         refreshMutes,

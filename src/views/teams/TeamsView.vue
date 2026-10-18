@@ -46,6 +46,10 @@
             </el-tag>
             <div class="sub">{{ muteRecord(row.id).reason || "—" }}</div>
           </template>
+          <!-- 列表被截断（>200 条生效禁言）且该行未能补齐：状态未知，不能当「未禁言」 -->
+          <el-tag v-else-if="muteState(row.id) === 'unknown'" type="info" size="small">
+            状态未知
+          </el-tag>
           <span v-else>—</span>
         </template>
       </el-table-column>
@@ -94,14 +98,14 @@
             </el-button>
           </template>
           <!-- 队伍级禁言：只拦该队成员发信，与封禁（status=4）是两套处罚；
-               已解散（1）没有主体、已封禁（4）后端会 409，这里禁用 -->
+               已解散（1）没有主体、已封禁（4）后端会 409，禁言状态未知时操作可能覆盖原处罚 -->
           <el-button
             v-if="auth.can('moderation.mute')"
             size="small"
             text
-            :disabled="isDissolved(row) || isBanned(row)"
+            :disabled="Boolean(muteBlockedReason(row))"
             :type="muteRecord(row.id) ? 'success' : 'warning'"
-            :title="isBanned(row) ? '已封禁，请先解封再禁言' : ''"
+            :title="muteBlockedReason(row)"
             @click="toggleMute(row)"
           >
             {{ muteRecord(row.id) ? "解除禁言" : "禁言" }}
@@ -115,7 +119,7 @@
     <MuteDialog
       v-model="muteDialog.visible"
       :target="muteDialog.target"
-      @done="first"
+      @done="onMuteDone"
     />
 
     <!-- 封禁对话框 -->
@@ -174,10 +178,25 @@ const isBanned = (row) => Number(row?.status) === 4;
 const {
     muteDialog,
     muteOf: muteRecord,
+    muteState,
     openMute,
     unmute,
     refreshMutes,
-} = useMuteActions("team", first);
+} = useMuteActions("team", first, { rows: list });
+
+function muteBlockedReason(row) {
+    if (isDissolved(row)) return "已解散，无法禁言";
+    if (isBanned(row)) return "已封禁，请先解封再禁言";
+    if (muteState(row.id) === "unknown") {
+        return "禁言状态未知（生效禁言超过 200 条），已禁用以免覆盖原处罚，请重新查询后再试";
+    }
+    return "";
+}
+
+// 禁言成功后列表与禁言状态都要刷新，否则刚禁言的队伍仍显示「禁言」
+async function onMuteDone() {
+    await Promise.all([first(), refreshMutes()]);
+}
 
 function toggleMute(row) {
     const label = row.name || `队伍 #${row.id}`;

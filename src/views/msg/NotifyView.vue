@@ -227,9 +227,23 @@ function playerLabel(item) {
     return `${item.username || "（无用户名）"}${no}（#${item.id}）`;
 }
 
-// 搜索结果与已选项合并：el-select 的 label 依赖选项对象，替换数组会让已选项变回裸 id
+// 只保留已选中的账号：el-select 的 label 依赖选项对象，丢了已选值会退化成裸 id
+function keepSelectedPlayers() {
+    const selected = new Set(accountIds.value);
+    playerOptions.value = playerOptions.value.filter((item) =>
+        selected.has(item.id),
+    );
+}
+
+// 本次搜索结果整体替换旧结果（仅保留已选中的账号）：
+// 否则先搜 Alice 再搜 Bob，未选中的 Alice 仍会留在下拉里；无结果时也会残留上一次的列表
 function mergePlayers(items) {
-    const map = new Map(playerOptions.value.map((item) => [item.id, item]));
+    const selected = new Set(accountIds.value);
+    const map = new Map(
+        playerOptions.value
+            .filter((item) => selected.has(item.id))
+            .map((item) => [item.id, item]),
+    );
     for (const item of items) {
         if (item && item.id != null) map.set(item.id, item);
     }
@@ -238,7 +252,10 @@ function mergePlayers(items) {
 
 async function searchPlayers(keyword) {
     const kw = String(keyword || "").trim();
-    if (!kw) return;
+    if (!kw) {
+        keepSelectedPlayers();
+        return;
+    }
     playerLoading.value = true;
     try {
         const data = await listPlayers({ keyword: kw, limit: 50 });
