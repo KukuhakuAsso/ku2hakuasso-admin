@@ -27,9 +27,12 @@ export function useMuteActions(kind, onChanged = () => {}, { rows } = {}) {
     const loading = ref(false);
 
     const idParam = kind === "team" ? "team_id" : "account_id";
-    // 非响应式：正在查询的 id，避免同一行重复发请求
-    const inflight = new Set();
+    // 非响应式：正在查询的 id → 发起查询时的代际（避免同一行重复发请求）
+    const inflight = new Map();
     let visibleRows = [];
+    // 每次 refreshMutes 自增。代际一变，上一代在途的响应、队列与清理全部作废：
+    // 清空缓存管不住已经发出的请求，必须让它们自己发现「我过期了」
+    let generation = 0;
 
     function keyOf(id) {
         return String(id);
@@ -53,6 +56,7 @@ export function useMuteActions(kind, onChanged = () => {}, { rows } = {}) {
 
     // 只取仍生效的禁言（status=active），一次最多 200 条，不分页
     async function refreshMutes() {
+        const gen = (generation += 1);
         loading.value = true;
         try {
             const data = await listMutes({
@@ -60,6 +64,8 @@ export function useMuteActions(kind, onChanged = () => {}, { rows } = {}) {
                 status: "active",
                 limit: LIST_LIMIT,
             });
+            // 期间又发起了新的刷新：本次结果（以及后面基于它的补查）整体作废
+            if (gen !== generation) return;
             const items = Array.isArray(data?.items) ? data.items : [];
             const map = new Map();
             for (const row of items) {
@@ -72,12 +78,17 @@ export function useMuteActions(kind, onChanged = () => {}, { rows } = {}) {
             // 还有没取回来的生效禁言：不能把这些主体当成「未禁言」
             truncated.value = Boolean(data?.hasMore);
             resolvedClear.value = new Set();
-            inflight.clear();
+            // 旧代登记的在途标记已无意义，留着只会挡住同一 id 在新代的查询
+            for (const [key, at] of inflight) {
+                if (at !== gen) inflight.delete(key);
+            }
         } catch {
             // 读列表失败不阻断主流程：按钮退化为「禁言」，服务端仍会拦非法解禁
         } finally {
-            loading.value = false;
+            // 新一代还在跑时不要替它关 loading
+            if (gen === generation) loading.value = false;
         }
+        if (gen !== generation) return;
         // 截断时补齐当前展示行，否则已禁言的目标会显示成「禁言」并覆盖原处罚
         await resolveMutes(visibleRows);
     }
@@ -86,6 +97,8 @@ export function useMuteActions(kind, onChanged = () => {}, { rows } = {}) {
     // 缺失的行若直接当「未禁言」，点下去就是重复禁言（覆盖处罚并重置申诉额度）
     async function resolveMutes(items) {
         if (!truncated.value) return;
+        // 整个补查绑定在发起时的代际上
+        const gen = generation;
 
         const queue = [];
         for (const row of items || []) {
@@ -93,7 +106,8 @@ export function useMuteActions(kind, onChanged = () => {}, { rows } = {}) {
             if (id === null || id === undefined || id === "") continue;
             const key = keyOf(id);
             if (muted.value.has(key) || resolvedClear.value.has(key)) continue;
-            if (inflight.has(key)) continue;
+            // 同一代里已在查就跳过；别的代留下的标记不算数
+            if (inflight.get(key) === gen) continue;
             queue.push({ key, id });
         }
         if (!queue.length) return;
@@ -101,9 +115,11 @@ export function useMuteActions(kind, onChanged = () => {}, { rows } = {}) {
         let index = 0;
         const worker = async () => {
             while (index < queue.length) {
+                // 刷新已换代：旧队列不再消费，免得把过期状态写回去
+                if (gen !== generation) return;
                 const { key, id } = queue[index];
                 index += 1;
-                inflight.add(key);
+                inflight.set(key, gen);
                 try {
                     const data = await listMutes({
                         target: kind,
@@ -111,6 +127,8 @@ export function useMuteActions(kind, onChanged = () => {}, { rows } = {}) {
                         [idParam]: id,
                         limit: LIST_LIMIT,
                     });
+                    // 响应晚于换代（如禁言被覆盖）：直接丢弃，不写状态
+                    if (gen !== generation) continue;
                     const rows = Array.isArray(data?.items) ? data.items : [];
                     const hit =
                         rows.find(
@@ -123,7 +141,8 @@ export function useMuteActions(kind, onChanged = () => {}, { rows } = {}) {
                 } catch {
                     // 单行查询失败：保持「未知」，界面禁用操作，避免误覆盖
                 } finally {
-                    inflight.delete(key);
+                    // 只清理本代自己的标记，别删掉新代同 id 的在途记录
+                    if (inflight.get(key) === gen) inflight.delete(key);
                 }
             }
         };

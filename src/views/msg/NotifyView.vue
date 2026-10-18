@@ -220,6 +220,8 @@ const teamIds = ref([]);
 // ---- 账号收件人：GET /admin/players 支持 keyword（编号或用户名），滚动做远程搜索 ----
 const playerOptions = ref([]);
 const playerLoading = ref(false);
+// 请求序号：每次搜索（含清空关键字）都自增，只有最新一次的响应能改选项 / 报错 / 关 loading
+let searchSeq = 0;
 
 function playerLabel(item) {
     if (!item) return "";
@@ -251,19 +253,26 @@ function mergePlayers(items) {
 }
 
 async function searchPlayers(keyword) {
+    const seq = (searchSeq += 1);
     const kw = String(keyword || "").trim();
     if (!kw) {
+        // 清空关键字也要让在途请求失效，否则它晚到会把旧结果重新塞回下拉
         keepSelectedPlayers();
+        playerLoading.value = false;
         return;
     }
     playerLoading.value = true;
     try {
         const data = await listPlayers({ keyword: kw, limit: 50 });
+        // 已经有更新的输入（或已清空）：本次结果整体丢弃
+        if (seq !== searchSeq) return;
         mergePlayers(data?.items || []);
     } catch (err) {
+        if (seq !== searchSeq) return;
         ElMessage.error(err.message);
     } finally {
-        playerLoading.value = false;
+        // loading 归最新一次请求管，旧请求不要替它关掉
+        if (seq === searchSeq) playerLoading.value = false;
     }
 }
 
