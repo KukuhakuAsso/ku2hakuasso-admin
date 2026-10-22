@@ -18,8 +18,7 @@ export function validateUsername(value) {
         return { ok: false, message: "用户名长度必须为 1–32 个字符" };
     }
 
-    const allowed =
-        /^[\p{L}\p{N}\p{Zs}_\-\.\+&'()\[\]!#$%*=?^\{\|\}~`]+$/u;
+    const allowed = /^[\p{L}\p{N}\p{Zs}_\-.+&'()[\]!#$%*=?^{|}~`]+$/u;
     if (!allowed.test(username)) {
         return { ok: false, message: "用户名包含非法字符" };
     }
