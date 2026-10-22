@@ -109,6 +109,12 @@ const routes = [
                 component: () => import("@/views/puzzles/PuzzlesView.vue"),
             },
             {
+                path: "pz",
+                name: "pz",
+                component: () => import("@/views/pz/PuzzleStudioView.vue"),
+                meta: { requiresPzContent: true },
+            },
+            {
                 path: "milestones",
                 name: "milestones",
                 component: () =>
@@ -154,6 +160,10 @@ router.beforeEach((to) => {
         return "/login";
     }
     if (to.meta.requiresAdmin && !auth.isAdmin) return "/dashboard";
+    // 出题台：需 pz.content.edit（admin 直接通过）
+    if (to.meta.requiresPzContent && !canEditPuzzleContent(auth)) {
+        return "/dashboard";
+    }
     // 定向通知：需 msg.notify.send（admin 直接通过）；内部公告在页内再按 admin 收口
     if (to.meta.requiresNotify && !canSendNotify(auth)) return "/dashboard";
     // 申诉工作台：admin 可看全部，staff 需 moderation.mute（只有禁言申诉）
@@ -171,6 +181,10 @@ router.beforeEach((to) => {
 
 function canHandleAppeals(auth) {
     return auth.isAdmin || auth.can("moderation.mute");
+}
+
+function canEditPuzzleContent(auth) {
+    return auth.isAdmin || auth.can("pz.content.edit");
 }
 
 function canSendNotify(auth) {

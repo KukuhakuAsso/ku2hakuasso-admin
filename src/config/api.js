@@ -87,7 +87,6 @@ export function getApiHeaders(extra = {}) {
         "X-API-Version": apiConfig.apiVersion,
         ...extra,
     };
-    console.log("API Headers:", headers, "Environment:", apiEnvironment.value);
     if (apiEnvironment.value === "test" && apiConfig.testTicket) {
         headers["X-Mistarg-Test-Ticket"] = apiConfig.testTicket;
     }
