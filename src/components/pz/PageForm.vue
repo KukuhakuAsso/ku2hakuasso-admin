@@ -1,7 +1,7 @@
 <script setup>
 // 五元素编辑：封面 → 描述 → 可塑区 → 附件，外加目录归属与解锁规则。
 // 标题不在这里（仍走 PUT /admin/puzzles/:key，避免两个真源）。
-import { computed, nextTick, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onMounted, ref, shallowRef, watch } from "vue";
 import { ElMessage } from "element-plus";
 import { putPuzzlePage } from "@/api/pz";
 import { ATTACHMENT_TYPES } from "@/config/pz";
@@ -95,6 +95,13 @@ const mergeRemote = ref(null);
 
 let pendingDetail = null;
 let promptedRev = null;
+// 因为「props 里还是半截 JSON」而没法对账的服务端更新：先挂在这里，
+// 等草稿重新可序列化后补处理。丢掉它就等于把服务端的改动悄悄撇在一边。
+// 用 shallowRef 是为了让下面的 watcher 能追踪到「有没有挂起项」——
+// 普通变量不会触发依赖收集，等于永远补不上；同时不把 detail 整棵对象变成深层响应式。
+const deferredDetail = shallowRef(null);
+// 只做「同一条提示不重复弹」，与「哪个 rev 已经处理过」是两件事
+let warnedRev = null;
 
 // 序列化不了（组件 props 里还是半截 JSON）时返回 null。
 // 绝不能兜底成「空页面」：那会让未完成的草稿和干净空页长得一样，
@@ -142,14 +149,21 @@ async function handleDetail(detail) {
 
     const current = snapshot();
     if (current === null) {
-        // 三方合并表示不了非法输入，而当成「干净」会静默吞掉草稿：
-        // 保留草稿，只提示一次，等用户修正后再走正常流程
-        promptedRev = detail.rev;
-        ElMessage.warning(
-            "表单里有无法解析的内容（如组件参数的 JSON 不完整），已保留你的草稿；修正后再保存即可同步服务端更新。",
-        );
+        // 三方合并表示不了非法输入，而当成「干净」会静默吞掉草稿。
+        // 这里只挂起、不记 promptedRev：那条记录表示「已处理」，
+        // 记上去就等于放弃了对账，用户修好 JSON 后再也不会被提醒。
+        deferredDetail.value = detail;
+        if (warnedRev !== detail.rev) {
+            warnedRev = detail.rev;
+            ElMessage.warning(
+                "表单里有无法解析的内容（如组件参数的 JSON 不完整），已保留你的草稿；修正后会提示你处理服务端更新。",
+            );
+        }
         return;
     }
+    // 能正常对账了：之前挂起的旧 rev 不再需要
+    deferredDetail.value = null;
+
     if (!initialized || current === syncedPayload || sameAsRemote(detail)) {
         await applyDetail(detail);
         return;
@@ -208,10 +222,26 @@ function onMergeClosed() {
     }
     const next = queuedDetail;
     queuedDetail = null;
-    if (next) handleDetail(next);
+    if (!next) return;
+    // Element Plus 的 afterLeave 是「先 emit closed、再 emit update:modelValue(false)」，
+    // 同步重开会立刻被那次写回关掉（弹窗一闪即没、prompting 卡住）。
+    // 等这次 model 更新落地后再开。
+    nextTick(() => handleDetail(next));
 }
 
 watch(() => props.detail, handleDetail, { immediate: true });
+
+// 草稿重新变得可序列化（用户把 props 的 JSON 补完整）后，把挂起的服务端更新补上对账。
+// 有挂起项时才去算 snapshot()：既保证依赖被收集（读到了 model），又不至于随时完整序列化。
+watch(
+    () => (deferredDetail.value ? snapshot() : null),
+    (next) => {
+        if (!deferredDetail.value || next === null) return;
+        const detail = deferredDetail.value;
+        deferredDetail.value = null;
+        handleDetail(detail);
+    },
+);
 
 // 挂载后重建一次基准：此时 UnlockForm 已绑定，toPayload() 与后续比较同源
 onMounted(syncBaseline);
@@ -447,6 +477,13 @@ function validate(payload) {
 
 async function save() {
     if (saving.value) return;
+
+    // 还有没对账的服务端更新（props 刚从半截 JSON 修好、或对比窗还开着）：
+    // 先处理完再提交，否则会用整份旧草稿覆盖只改了一个字段的服务端版本。
+    if (deferredDetail.value) {
+        ElMessage.warning("服务端已有更新待对比，请稍候再保存");
+        return;
+    }
 
     let payload;
     try {
