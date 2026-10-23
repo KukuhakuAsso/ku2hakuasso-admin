@@ -13,14 +13,26 @@ const key = (value) => encodeURIComponent(String(value ?? ""));
 
 // ---------- 可塑区组件 ----------
 
-// 上传 Vue SFC 源码 → 服务端编译成单文件 ESM 并登记版本。
-// 响应 widget：{ id, name, version, tag, integrity, bytes, url, createdAt }
-// 同 name@version 已存在返回 409，升级必须发新版本。
-export const compileWidget = ({ name, version, source, note }) =>
-    post("/admin/pz/widgets/compile", { name, version, source, note });
+// 第一步：拿 Vue 源码上传地址。
+// 响应 { upload: { objectKey, url, method, headers, expiresAt }, limits: { maxBytes } }
+// upload.url 含临时授权：不要打日志、不要持久化。
+export const signWidgetSource = ({ name, filename, sizeBytes }) =>
+    post("/admin/pz/widgets/source/sign", { name, filename, sizeBytes });
 
-// 已登记组件清单：status 1 = 可用，2 = 停用（玩家侧下发 404）。
+// 第二步：把直传好的源码编译成组件 ESM 并登记。
+// 版本号由服务端分配并自动递增（1.0.0 → 1.0.1），前端不再传 version。
+// 响应 { widget: {...}, replaced: { esmVersions, referencesUpdated } }
+export const compileWidget = ({ name, objectKey, note }) =>
+    post("/admin/pz/widgets/compile", { name, objectKey, note });
+
+// 组件清单：每个 name 只返回最新 ESM 与仍留档的源码（sources，最多 3 版）。
+// status 1 = 可用，2 = 停用（玩家侧下发 404）。
 export const listWidgets = () => get("/admin/pz/widgets");
+
+// 读取仍留档的某个版本的 Vue 源码；404 = 该版本没留档或已被清理。
+// 响应 { source: { name, version, source, sizeBytes, sourceHash, createdAt } }
+export const getWidgetSource = (name, version) =>
+    get(`/admin/pz/widgets/${key(name)}/source/${key(version)}`);
 
 // ---------- 素材（两步直传） ----------
 

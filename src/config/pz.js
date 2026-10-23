@@ -5,7 +5,8 @@ export const MEDIA_KINDS = [
     {
         mediaType: "image",
         label: "图片",
-        mimes: ["image/webp", "image/png", "image/jpeg"],
+        // mimes 必须与 exts 按下标一一对应（jpg / jpeg 都是 image/jpeg）
+        mimes: ["image/webp", "image/png", "image/jpeg", "image/jpeg"],
         exts: ["webp", "png", "jpg", "jpeg"],
         maxBytes: 5 * 1024 * 1024,
     },

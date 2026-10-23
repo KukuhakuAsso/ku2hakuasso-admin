@@ -32,20 +32,42 @@ const hint = computed(() =>
     ).join(" · "),
 );
 
+// 每次加载都 +1；晚到的响应靠它判断自己是否已被后续加载取代。
+// 只比 key 不够 —— A→B→A 时两次 key 相同，晚到的 A 仍会盖掉第二次的 A。
+let loadSeq = 0;
+
+function isStaleLoad(seq, key) {
+    return seq !== loadSeq || key !== props.puzzleKey;
+}
+
 async function load() {
-    if (!props.puzzleKey) {
-        items.value = [];
+    const key = props.puzzleKey;
+    const seq = ++loadSeq;
+
+    // 先清空并把空清单抛给父级：切题/加载期间，旧题的素材不能再留在
+    // 封面与附件下拉里被选中（保存时会被后端以「素材不属于本题」拒绝）
+    items.value = [];
+    emit("changed", items.value);
+
+    if (!key) {
+        loading.value = false;
         return;
     }
+
     loading.value = true;
     try {
-        const data = await listMedia(props.puzzleKey);
+        const data = await listMedia(key);
+        // 迟到的响应直接丢弃，否则会把旧题的素材塞进新题的下拉
+        if (isStaleLoad(seq, key)) return;
         items.value = data?.media ?? [];
         emit("changed", items.value);
     } catch (error) {
+        // 迟到的错误同样别弹，它已经和当前选中的题无关了
+        if (isStaleLoad(seq, key)) return;
         ElMessage.error(error?.message || "素材列表加载失败");
     } finally {
-        loading.value = false;
+        // 只有最新一次加载能收起 loading，否则会把新题的转圈关掉
+        if (!isStaleLoad(seq, key)) loading.value = false;
     }
 }
 
@@ -75,7 +97,13 @@ function pickFile(event) {
 async function upload() {
     if (!props.puzzleKey || !file.value || uploading.value) return;
 
-    const check = validateMediaFile(file.value);
+    // 上传期间用户可能切题：watch 会把 file.value 清成 null、puzzleKey 换成新题。
+    // 三步（sign → PUT → confirm）必须都落在同一个题、同一个文件上，
+    // 所以先快照下来，后续一律用快照，不再读 props / file.value。
+    const puzzleKey = props.puzzleKey;
+    const picked = file.value;
+
+    const check = validateMediaFile(picked);
     if (!check.ok) {
         ElMessage.error(check.message);
         return;
@@ -86,8 +114,8 @@ async function upload() {
     try {
         // 1) 拿直传地址（只在内存里用，不落 localStorage、不打日志）
         const signed = await signMedia({
-            puzzleKey: props.puzzleKey,
-            filename: file.value.name,
+            puzzleKey,
+            filename: picked.name,
             mime: check.mime,
             sizeBytes: check.sizeBytes,
         });
@@ -95,23 +123,25 @@ async function upload() {
         if (!uploadInfo?.url) throw new Error("未获取到上传地址");
 
         // 2) 直传对象存储（不经过后端）
-        await uploadToSignedUrl(uploadInfo, file.value, (value) => {
-            progress.value = value;
+        await uploadToSignedUrl(uploadInfo, picked, (value) => {
+            // 已经切题了就别把进度写到新题的进度条上
+            if (props.puzzleKey === puzzleKey) progress.value = value;
         }).promise;
 
         // 3) 确认登记
         await confirmMedia({
-            puzzleKey: props.puzzleKey,
+            puzzleKey,
             objectKey: uploadInfo.objectKey,
-            filename: file.value.name,
+            filename: picked.name,
             mime: check.mime,
             sizeBytes: check.sizeBytes,
         });
 
         ElMessage.success("素材已上传并登记");
-        file.value = null;
+        // 只在文件没被换过时清空，否则会把用户为新题刚选的文件也清掉
+        if (file.value === picked) file.value = null;
+        // load() 内部会把清单 emit 给父级，这里不用再 emit 一次
         await load();
-        emit("changed", items.value);
     } catch (error) {
         ElMessage.error(error?.message || "上传失败");
     } finally {
