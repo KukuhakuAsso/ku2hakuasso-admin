@@ -91,16 +91,31 @@ async function fetchDetail(key) {
     }
 }
 
+// 每次切题都 +1；晚到的响应靠它判断自己是否已经被后来的操作取代。
+// 只比对 key 不够 —— A→B→A 时两次 key 相同，晚到的 A 仍会盖掉第二次的 A。
+let selectSeq = 0;
+
+function isStale(seq, key) {
+    return seq !== selectSeq || key !== selectedKey.value;
+}
+
 async function selectPuzzle(key) {
+    const seq = ++selectSeq;
     selectedKey.value = key;
     detail.value = null;
     detailLoading.value = true;
     try {
-        detail.value = await fetchDetail(key);
+        const data = await fetchDetail(key);
+        // 迟到的响应直接丢弃，否则会把新题的详情盖掉（保存时就会写到错的题上）
+        if (isStale(seq, key)) return;
+        detail.value = data;
     } catch (error) {
+        // 迟到的错误同样别弹，它已经和当前选中的题无关了
+        if (isStale(seq, key)) return;
         ElMessage.error(error?.message || "页面草稿加载失败");
     } finally {
-        detailLoading.value = false;
+        // 只有最新一次请求能收起 loading，否则会把新题的转圈关掉
+        if (!isStale(seq, key)) detailLoading.value = false;
     }
 }
 
@@ -141,7 +156,9 @@ async function submitCreate() {
         });
         createOpen.value = false;
         keyword.value = "";
-        // 页面草稿此刻还不存在，直接进编辑，第一次「保存页面」才落库
+        // 页面草稿此刻还不存在，直接进编辑，第一次「保存页面」才落库。
+        // 递增 seq：把还在飞的旧题请求作废，别让它落地
+        selectSeq += 1;
         selectedKey.value = key;
         detail.value = blankDetail(key, puzzle.title ?? title);
         ElMessage.success(`已创建 ${key}，接着写页面内容吧`);
@@ -170,17 +187,21 @@ loadPuzzles();
 loadSideLists();
 
 async function onSaved(data) {
-    const key = selectedKey.value;
+    // 保存的是哪道题以响应为准：保存期间用户可能已经切走，别再拿 selectedKey 猜
+    const key = data?.key || selectedKey.value;
     const target = puzzles.value.find((item) => item.key === key);
     if (target && data?.rev != null) target.rev = data.rev;
 
     // 保存后以服务端为准重取一次：后端会补默认值、丢空字段、规范化形状，
     // 只回填 rev 会让表单停在提交前的内容，与真实存档对不上
+    const seq = selectSeq;
     try {
         const fresh = await fetchDetail(key);
-        // 期间切了题就别把旧题的存档盖到新题上
-        if (key === selectedKey.value) detail.value = fresh;
+        // 期间切走了（或切走又切回来过）就别覆盖，交给切题那次请求去落地
+        if (isStale(seq, key)) return;
+        detail.value = fresh;
     } catch (error) {
+        if (isStale(seq, key)) return;
         ElMessage.error(error?.message || "刷新页面状态失败");
     }
 }
@@ -193,10 +214,13 @@ async function onWidgetPublished({ name, referencesUpdated }) {
         return;
     }
     const key = selectedKey.value;
+    const seq = selectSeq;
     try {
         const fresh = await fetchDetail(key);
-        if (key === selectedKey.value) detail.value = fresh;
+        if (isStale(seq, key)) return;
+        detail.value = fresh;
     } catch (error) {
+        if (isStale(seq, key)) return;
         ElMessage.error(error?.message || "刷新页面状态失败");
     }
 }

@@ -61,18 +61,27 @@ function importFile(event) {
     event.target.value = "";
 }
 
+// 每次「读取源码」都 +1：两行可以同时点，靠它丢弃迟到的响应。
+// 否则先点的 A 后返回时，会把编辑区和组件名一起盖回 A ——
+// 用户以为在改 B，点发布却发布了 A。
+let sourceSeq = 0;
+
 // 回读仍留档的旧版本源码，编辑后重新发布会自动生成更高版本
 async function loadSource(name, version) {
+    const seq = ++sourceSeq;
     loadingSource.value = `${name}@${version}`;
     try {
         const data = await getWidgetSource(name, version);
+        if (seq !== sourceSeq) return;
         source.value = data?.source?.source ?? "";
         form.value.name = name;
         ElMessage.success(`已载入 ${name}@${version} 的源码，发布后会生成新版本`);
     } catch (error) {
+        if (seq !== sourceSeq) return;
         ElMessage.error(error?.message || "源码读取失败");
     } finally {
-        loadingSource.value = "";
+        // 只有最新一次读取能收起 loading，否则会把新请求的转圈关掉
+        if (seq === sourceSeq) loadingSource.value = "";
     }
 }
 
@@ -87,11 +96,16 @@ async function compile() {
         ElMessage.error("请填写 SFC 源码");
         return;
     }
-    const bytes = new Blob([source.value]).size;
-    if (bytes > MAX_SOURCE_BYTES) {
+
+    // 发布期间编辑器、载入 .vue、读取源码都可能被操作（下面会把它们禁掉，
+    // 但这里再固化一份才算真正安全）：本次要发的源码与备注先快照成 Blob，
+    // 校验、签名、上传全用同一份，避免「签的是这份、传的是另一份」。
+    const payload = new Blob([source.value], { type: "text/plain; charset=utf-8" });
+    if (payload.size > MAX_SOURCE_BYTES) {
         ElMessage.error("源码不能超过 128KB");
         return;
     }
+    const note = form.value.note || undefined;
 
     compiling.value = true;
     progress.value = 0;
@@ -100,25 +114,21 @@ async function compile() {
         const signed = await signWidgetSource({
             name,
             filename: `${name}.vue`,
-            sizeBytes: bytes,
+            sizeBytes: payload.size,
         });
         const upload = signed?.upload;
         if (!upload?.url) throw new Error("未获取到上传地址");
 
         // 2) 直传 .vue 原文（不经过后端）
-        await uploadToSignedUrl(
-            upload,
-            new Blob([source.value], { type: "text/plain; charset=utf-8" }),
-            (value) => {
-                progress.value = value;
-            },
-        ).promise;
+        await uploadToSignedUrl(upload, payload, (value) => {
+            progress.value = value;
+        }).promise;
 
         // 3) 编译并登记：版本号由服务端分配
         const data = await compileWidget({
             name,
             objectKey: upload.objectKey,
-            note: form.value.note || undefined,
+            note,
         });
         const widget = data?.widget;
         const upgraded = Number(data?.replaced?.referencesUpdated) || 0;
@@ -149,10 +159,14 @@ defineExpose({ reload: load, widgets });
     <div class="widget-panel">
         <el-form label-width="72px" size="small">
             <el-form-item label="组件名">
-                <el-input v-model="form.name" placeholder="如 time-garden" />
+                <el-input v-model="form.name" :disabled="compiling" placeholder="如 time-garden" />
             </el-form-item>
             <el-form-item label="备注">
-                <el-input v-model="form.note" placeholder="可选，≤200 字，便于审计" />
+                <el-input
+                    v-model="form.note"
+                    :disabled="compiling"
+                    placeholder="可选，≤200 字，便于审计"
+                />
             </el-form-item>
             <el-form-item label="源码">
                 <div class="widget-panel__source">
@@ -160,19 +174,22 @@ defineExpose({ reload: load, widgets });
                         <span class="tip">
                             SFC ≤128KB，仅 &lt;script setup&gt;；不能 import 子组件/第三方库
                         </span>
-                        <label class="file-btn">
+                        <label class="file-btn" :class="{ 'is-disabled': compiling }">
                             载入 .vue
                             <input
                                 type="file"
                                 accept=".vue,text/plain"
+                                :disabled="compiling"
                                 hidden
                                 @change="importFile"
                             />
                         </label>
                     </div>
+                    <!-- 发布期间禁止改源码：避免「签的是一份、传的是另一份」 -->
                     <SourceEditor
                         v-model="source"
                         height="260px"
+                        :readonly="compiling"
                         placeholder="<template>…</template>
 <script setup>
 import { ref } from 'vue'
@@ -225,6 +242,7 @@ import { ref } from 'vue'
                                 link
                                 type="primary"
                                 size="small"
+                                :disabled="compiling"
                                 :loading="loadingSource === `${row.name}@${item.version}`"
                                 @click="loadSource(row.name, item.version)"
                             >
@@ -300,6 +318,17 @@ import { ref } from 'vue'
 .file-btn:hover {
     color: var(--el-color-primary);
     border-color: var(--el-color-primary);
+}
+
+.file-btn.is-disabled {
+    color: var(--el-text-color-disabled);
+    border-color: var(--el-border-color-lighter);
+    cursor: not-allowed;
+}
+
+.file-btn.is-disabled:hover {
+    color: var(--el-text-color-disabled);
+    border-color: var(--el-border-color-lighter);
 }
 
 .tip {

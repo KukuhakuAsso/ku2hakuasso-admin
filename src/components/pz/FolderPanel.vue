@@ -135,7 +135,10 @@ defineExpose({ reload: load, folders });
             </el-table-column>
         </el-table>
 
-        <el-dialog v-model="dialog" title="目录" width="480px">
+        <!-- destroy-on-close：关闭即销毁内容。否则取消后再打开同一目录时，
+             form.unlock 仍是同一个对象引用，UnlockForm 的 watch 不触发，
+             会沿用上一轮被取消的规则，最后被静默保存。 -->
+        <el-dialog v-model="dialog" title="目录" width="480px" destroy-on-close>
             <el-form label-width="80px" size="small">
                 <el-form-item label="标识">
                     <el-input
