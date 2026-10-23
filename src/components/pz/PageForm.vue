@@ -84,6 +84,7 @@ function toModel(detail) {
 let syncedPayload = null;
 let initialized = false;
 let prompting = false;
+let closing = false;
 let queuedDetail = null;
 
 const mergeOpen = ref(false);
@@ -95,24 +96,13 @@ const mergeRemote = ref(null);
 let pendingDetail = null;
 let promptedRev = null;
 
-function localPayload() {
-    try {
-        return toPayload();
-    } catch {
-        // props 不是合法 JSON 之类：给个空页面，至少还能选「载入服务端」
-        return {
-            folderKey: model.value.folderKey || null,
-            page: {},
-            unlock: model.value.unlock,
-        };
-    }
-}
-
+// 序列化不了（组件 props 里还是半截 JSON）时返回 null。
+// 绝不能兜底成「空页面」：那会让未完成的草稿和干净空页长得一样，
+// 合并时还会把已有的描述/封面/附件显示成「本地删除」，默认选项一应用就没了。
 function snapshot() {
     try {
-        return JSON.stringify(localPayload());
+        return JSON.stringify(toPayload());
     } catch {
-        // 算作脏，宁可多问一次也别静默覆盖
         return null;
     }
 }
@@ -131,7 +121,7 @@ async function applyDetail(detail) {
 // 本地草稿在字段上是否已经等于服务端这次回来的内容（只是 rev 不同）
 function sameAsRemote(detail) {
     try {
-        return JSON.stringify(localPayload()) === JSON.stringify(payloadOf(detail));
+        return JSON.stringify(toPayload()) === JSON.stringify(payloadOf(detail));
     } catch {
         return false;
     }
@@ -142,24 +132,35 @@ function sameAsRemote(detail) {
 //   有未保存修改 → 打开三方合并弹窗，由用户逐字段决定
 async function handleDetail(detail) {
     if (!detail) return;
-    // 弹窗期间又来了新 detail：排队，等这次选择完再处理
-    if (prompting) {
+    // 弹窗开着（或正在收尾）时又来了新 detail：排队，等这次选择完再处理
+    if (prompting || closing) {
         queuedDetail = detail;
-        return;
-    }
-    if (!initialized || snapshot() === syncedPayload || sameAsRemote(detail)) {
-        await applyDetail(detail);
         return;
     }
     // 同一个 rev 已经问过就别重复打扰
     if (promptedRev === detail.rev) return;
+
+    const current = snapshot();
+    if (current === null) {
+        // 三方合并表示不了非法输入，而当成「干净」会静默吞掉草稿：
+        // 保留草稿，只提示一次，等用户修正后再走正常流程
+        promptedRev = detail.rev;
+        ElMessage.warning(
+            "表单里有无法解析的内容（如组件参数的 JSON 不完整），已保留你的草稿；修正后再保存即可同步服务端更新。",
+        );
+        return;
+    }
+    if (!initialized || current === syncedPayload || sameAsRemote(detail)) {
+        await applyDetail(detail);
+        return;
+    }
 
     prompting = true;
     promptedRev = detail.rev;
     pendingDetail = detail;
     mergeRev.value = detail.rev ?? 0;
     mergeBase.value = syncedPayload ? JSON.parse(syncedPayload) : null;
-    mergeLocal.value = localPayload();
+    mergeLocal.value = JSON.parse(current);
     mergeRemote.value = payloadOf(detail);
     mergeOpen.value = true;
 }
@@ -167,6 +168,11 @@ async function handleDetail(detail) {
 function onMergeApply({ mode, payload }) {
     const detail = pendingDetail;
     pendingDetail = null;
+    // 本组件是 mergeOpen 的唯一控制者：先关窗，排队的 detail 等关闭动画结束后再处理
+    mergeOpen.value = false;
+    prompting = false;
+    closing = true;
+
     if (!detail) return;
 
     if (mode === "remote") {
@@ -184,16 +190,25 @@ function onMergeApply({ mode, payload }) {
         syncedPayload = JSON.stringify(payloadOf(detail));
         initialized = true;
     } else {
-        // 保留我的修改：只把版本号对齐，正文继续用用户手上的草稿
+        // 保留我的修改：正文继续用用户手上的草稿，但基准仍要推进到这次看到的服务端内容。
+        // 否则下一轮带着同一处服务端改动的刷新会被判成「仅服务端改过」，又一次默认覆盖草稿。
         model.value.rev = detail.rev ?? model.value.rev;
+        syncedPayload = JSON.stringify(payloadOf(detail));
     }
+}
 
-    prompting = false;
-    if (queuedDetail) {
-        const next = queuedDetail;
-        queuedDetail = null;
-        handleDetail(next);
+// 关闭动画结束后才处理排队项：旧弹窗还没关就打开新弹窗，会被随后的关闭动作一起关掉，
+// 界面消失而 prompting 仍是 true，之后所有刷新都无处可解。
+function onMergeClosed() {
+    closing = false;
+    // 兜底：万一有非 footer 的路径把弹窗关掉，别把 prompting 卡在 true
+    if (prompting) {
+        prompting = false;
+        pendingDetail = null;
     }
+    const next = queuedDetail;
+    queuedDetail = null;
+    if (next) handleDetail(next);
 }
 
 watch(() => props.detail, handleDetail, { immediate: true });
@@ -692,6 +707,7 @@ async function save() {
             :remote="mergeRemote"
             :media="media"
             @apply="onMergeApply"
+            @closed="onMergeClosed"
         />
     </div>
 </template>

@@ -157,8 +157,11 @@ async function submitCreate() {
         createOpen.value = false;
         keyword.value = "";
         // 页面草稿此刻还不存在，直接进编辑，第一次「保存页面」才落库。
-        // 递增 seq：把还在飞的旧题请求作废，别让它落地
+        // 递增 seq：把还在飞的旧题请求作废，别让它落地；
+        // 但那条请求的 finally 会因此跳过收尾，这里必须自己把 loading 关掉，
+        // 否则新题一直被中间栏的加载遮罩盖着。
         selectSeq += 1;
+        detailLoading.value = false;
         selectedKey.value = key;
         detail.value = blankDetail(key, puzzle.title ?? title);
         ElMessage.success(`已创建 ${key}，接着写页面内容吧`);
