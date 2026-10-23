@@ -4,7 +4,7 @@
 // 版本号由服务端分配并自动递增（1.0.0 → 1.0.1），前端不再填版本；
 // 发布后引用旧版本的题目会被自动改到新版本（这些题目的 page_rev 会 +1），
 // 每个组件只保留最新 ESM，Vue 源码留最近 3 版 —— 更早的源码不可再读取。
-import { ref } from "vue";
+import { computed, ref } from "vue";
 import { ElMessage } from "element-plus";
 import {
     compileWidget,
@@ -66,6 +66,10 @@ function importFile(event) {
 // 用户以为在改 B，点发布却发布了 A。
 let sourceSeq = 0;
 
+// 读取源码期间同样要锁住会改动草稿的控件：迟到的响应会把这期间输入的内容
+// 和组件名一起盖回被读取的那个组件。
+const draftLocked = computed(() => compiling.value || Boolean(loadingSource.value));
+
 // 回读仍留档的旧版本源码，编辑后重新发布会自动生成更高版本
 async function loadSource(name, version) {
     const seq = ++sourceSeq;
@@ -86,6 +90,12 @@ async function loadSource(name, version) {
 }
 
 async function compile() {
+    // 源码还没读回来就发布，发出去的是上一个组件的名字与源码
+    if (loadingSource.value) {
+        ElMessage.error("正在读取源码，请稍候再发布");
+        return;
+    }
+
     const name = String(form.value.name || "").trim();
 
     if (!NAME_RE.test(name)) {
@@ -159,7 +169,7 @@ defineExpose({ reload: load, widgets });
     <div class="widget-panel">
         <el-form label-width="72px" size="small">
             <el-form-item label="组件名">
-                <el-input v-model="form.name" :disabled="compiling" placeholder="如 time-garden" />
+                <el-input v-model="form.name" :disabled="draftLocked" placeholder="如 time-garden" />
             </el-form-item>
             <el-form-item label="备注">
                 <el-input
@@ -174,22 +184,22 @@ defineExpose({ reload: load, widgets });
                         <span class="tip">
                             SFC ≤128KB，仅 &lt;script setup&gt;；不能 import 子组件/第三方库
                         </span>
-                        <label class="file-btn" :class="{ 'is-disabled': compiling }">
+                        <label class="file-btn" :class="{ 'is-disabled': draftLocked }">
                             载入 .vue
                             <input
                                 type="file"
                                 accept=".vue,text/plain"
-                                :disabled="compiling"
+                                :disabled="draftLocked"
                                 hidden
                                 @change="importFile"
                             />
                         </label>
                     </div>
-                    <!-- 发布期间禁止改源码：避免「签的是一份、传的是另一份」 -->
+                    <!-- 发布/读取源码期间禁止改源码：避免「签的是一份、传的是另一份」或被迟到响应覆盖 -->
                     <SourceEditor
                         v-model="source"
                         height="260px"
-                        :readonly="compiling"
+                        :readonly="draftLocked"
                         placeholder="<template>…</template>
 <script setup>
 import { ref } from 'vue'
@@ -202,6 +212,7 @@ import { ref } from 'vue'
                     type="primary"
                     size="small"
                     :loading="compiling"
+                    :disabled="Boolean(loadingSource)"
                     @click="compile"
                 >
                     编译并发布

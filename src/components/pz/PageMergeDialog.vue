@@ -20,7 +20,7 @@ const props = defineProps({
     media: { type: Array, default: () => [] },
 });
 
-const emit = defineEmits(["update:modelValue", "apply"]);
+const emit = defineEmits(["update:modelValue", "apply", "closed"]);
 
 const FIELDS = [
     { key: "description", label: "描述" },
@@ -156,11 +156,12 @@ function summary(row, side) {
     return String(value ?? "");
 }
 
+// 每一行都按 choices 取值：local / remote / conflict 一律允许用户改选，
+// 否则「点服务端丢掉本地改动」这种操作会静默无效。
+// 打开时的 watcher 已按四态写好默认值，所以不勾「逐字段选择」时行为不变。
 function chooseValue(row) {
     if (row.status === "same") return row.local;
-    if (row.status === "local") return row.local;
-    if (row.status === "remote") return row.remote;
-    return choices.value[row.key] === "local" ? row.local : row.remote;
+    return choices.value[row.key] === "remote" ? row.remote : row.local;
 }
 
 function mergedPayload() {
@@ -178,17 +179,23 @@ function mergedPayload() {
     return { folderKey, page, unlock };
 }
 
+// 只负责把选择交给父级；关闭动作由父级控制 mergeOpen 完成。
+// 这里再自己置一次 visible=false 会把父级随即打开的下一个弹窗一起关掉
+// （emit 是同步的：父级在 emit 里就开了新弹窗，随后这里把它关掉）。
 function apply(mode) {
     if (mode === "merge") {
         emit("apply", { mode: "merge", payload: mergedPayload() });
     } else {
         emit("apply", { mode });
     }
-    visible.value = false;
 }
 </script>
 
 <template>
+    <!-- 三处关闭路径全部禁掉（X、Esc、点遮罩）：它们只会改 modelValue，
+         不会 emit apply，父级的 prompting 就会永远停在 true，
+         之后所有服务端更新都被排队且再也打不开这个弹窗。
+         必须由 footer 的两个按钮之一来收尾。 -->
     <el-dialog
         v-model="visible"
         title="服务端已有更新"
@@ -196,6 +203,10 @@ function apply(mode) {
         top="6vh"
         append-to-body
         class="merge-dialog"
+        :show-close="false"
+        :close-on-click-modal="false"
+        :close-on-press-escape="false"
+        @closed="emit('closed')"
     >
         <p class="merge-dialog__lead">
             你还有未保存的修改，服务端已更新到 rev {{ rev }}。
