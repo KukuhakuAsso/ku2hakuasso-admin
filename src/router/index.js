@@ -139,7 +139,7 @@ const routes = [
 ];
 
 export const router = createRouter({
-    history: createWebHistory("/admin/"),
+    history: createWebHashHistory("/admin/"),
     routes,
 });
 

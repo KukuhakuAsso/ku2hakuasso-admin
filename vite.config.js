@@ -36,6 +36,8 @@ export default defineConfig(({ mode }) => {
     ];
 
     const proxy = {};
+    const rewriteTo = String(proxyRewriteTo ?? "").replace(/\/+$/, "");
+
     for (const prefix of proxyPrefixes) {
         proxy[prefix] = {
             target: proxyTarget,
@@ -46,6 +48,13 @@ export default defineConfig(({ mode }) => {
                         new RegExp(`^${escapeRegExp(prefix)}`),
                         proxyRewriteTo,
                     ),
+            }),
+            // 后端把刷新令牌 Cookie 固定在 Path=/api/auth，而浏览器是按「未被 rewrite 的地址」
+            // 匹配 Cookie 的：请求 /api-admin/auth/refresh 时，Path=/api/auth 的 Cookie 不会发出去，
+            // 结果每次刷新（含每次打开后台的 syncAccount）都只能拿到 401。
+            // Set-Cookie 的 Path 也要改成对外前缀，否则 dev 下永远换不到新 access_token。
+            ...(rewriteTo && {
+                cookiePathRewrite: { [`${rewriteTo}/auth`]: `${prefix}/auth` },
             }),
         };
     }
