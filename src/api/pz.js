@@ -1,15 +1,28 @@
-// 出题相关接口（api-12）：可塑区组件、素材、页面与目录。
+// 出题相关接口（api-12 + api-9 的题目主数据）：题目主数据、可塑区组件、素材、页面与目录。
 //
-// 全部走 /api/admin/pz/*：
-//   * 组件：`pz.widget.publish`
-//   * 素材 / 页面 / 目录：`pz.content.edit`
+// 路径分两类：
+//   * 题目主数据 /admin/puzzles*（GET staff，PUT admin）
+//   * 出题台其余接口 /admin/pz/*
+//       - 组件：`pz.widget.publish`
+//       - 素材 / 页面 / 目录：`pz.content.edit`
 // admin 直通；权限判定在后端，前端用 auth.can(code) 决定是否显示入口。
 //
-// 题目主数据（标题 / 排序 / 奖励 / 答案 / 启用）仍在 api/puzzles.js 的
-// `PUT /admin/puzzles/:key`，这里只管五元素页面（page 里不存标题）。
+// 五元素页面（page）里不存标题：标题属于题目主数据，走下面的 PUT /admin/puzzles/:key。
 import { del, get, post, put } from "./http";
 
 const key = (value) => encodeURIComponent(String(value ?? ""));
+
+// ---------- 题目主数据（标题 / 排序 / 奖励 / 答案 / 启用） ----------
+
+// 题库列表：items 字段为 key / title / ord / archiveId / tipsReward / enabled。
+// staff 可读；写（PUT）仅 admin。
+export const listPuzzles = () => get("/admin/puzzles");
+
+// 按需提交字段：更新时未传字段保持原值，新增时使用默认值。
+// 可提交 title / ord / archive_id / tips_reward / enabled / answer。
+export const putPuzzle = (puzzleKey, body) =>
+    put(`/admin/puzzles/${key(puzzleKey)}`, body);
+
 
 // ---------- 可塑区组件 ----------
 

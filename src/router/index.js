@@ -104,9 +104,9 @@ const routes = [
                 component: () => import("@/views/tips/TipsView.vue"),
             },
             {
+                // 题库已并入出题台（中间栏「题目主数据」标签）；旧链接保留，直接转过去
                 path: "puzzles",
-                name: "puzzles",
-                component: () => import("@/views/puzzles/PuzzlesView.vue"),
+                redirect: "/pz",
             },
             {
                 path: "pz",

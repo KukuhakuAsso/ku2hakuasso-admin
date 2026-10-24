@@ -7,10 +7,11 @@
 //   素材/组件/目录 各自面板内自行加载，并通过 changed 事件回传，供页面表单选择。
 import { computed, ref } from "vue";
 import { ElMessage } from "element-plus";
-import { listPuzzles, putPuzzle } from "@/api/puzzles";
-import { getPuzzlePage, listFolders, listWidgets } from "@/api/pz";
+import { getPuzzlePage, listFolders, listPuzzles, listWidgets, putPuzzle } from "@/api/pz";
+import { pick } from "@/utils/format";
 import { useAuthStore } from "@/stores/auth";
 import PageForm from "@/components/pz/PageForm.vue";
+import PuzzleMetaForm from "@/components/pz/PuzzleMetaForm.vue";
 import MediaPanel from "@/components/pz/MediaPanel.vue";
 import WidgetPanel from "@/components/pz/WidgetPanel.vue";
 import FolderPanel from "@/components/pz/FolderPanel.vue";
@@ -33,6 +34,8 @@ const widgets = ref([]);
 const folders = ref([]);
 
 const activeTab = ref("media");
+// 中间栏：页面五元素 / 题目主数据（原「题库」页并入这里）
+const editorTab = ref("page");
 
 const createOpen = ref(false);
 const creating = ref(false);
@@ -55,6 +58,13 @@ function blankDetail(key, title) {
 function titleOf(key) {
     return puzzles.value.find((item) => item.key === key)?.title ?? "";
 }
+
+// 当前选中题目的列表行（主数据表单的数据源）
+const selectedRow = computed(
+    () => puzzles.value.find((item) => item.key === selectedKey.value) ?? null,
+);
+// PUT /admin/puzzles/:key 是 admin 专属：非 admin 只读展示（与原「题库」页的权限一致）
+const canEditMeta = computed(() => auth.isAdmin);
 
 const filteredPuzzles = computed(() => {
     const word = keyword.value.trim().toLowerCase();
@@ -209,6 +219,35 @@ async function onSaved(data) {
     }
 }
 
+// 保存主数据后把响应合并回列表行：中间栏标题、左侧列表、页面表单的 title 都读同一份
+function onMetaSaved(puzzle) {
+    if (!puzzle) return;
+    const key = puzzle.key || selectedKey.value;
+    const target = puzzles.value.find((item) => item.key === key);
+    if (target) {
+        // PUT 响应是 snake_case，GET 是 camelCase：两种都认，只覆盖确实返回的字段
+        const title = pick(puzzle, "title");
+        const enabled = pick(puzzle, "enabled");
+        const ord = pick(puzzle, "ord");
+        const tipsReward = pick(puzzle, "tipsReward", "tips_reward");
+        const archiveId = pick(puzzle, "archiveId", "archive_id");
+
+        if (title !== undefined) target.title = title;
+        if (enabled !== undefined) target.enabled = enabled;
+        if (ord !== undefined) target.ord = ord;
+        if (tipsReward !== undefined) target.tipsReward = tipsReward;
+        if (archiveId !== undefined) target.archiveId = archiveId;
+    }
+
+    // 中间栏头部与 PageForm 都读 detail，一并跟上
+    if (detail.value && detail.value.key === key) {
+        const title = pick(puzzle, "title");
+        const enabled = pick(puzzle, "enabled");
+        if (title !== undefined) detail.value.title = title;
+        if (enabled !== undefined) detail.value.enabled = enabled;
+    }
+}
+
 // 发布组件会让引用它的题目自动升级版本、page_rev +1；
 // 当前题目若正好引用了这个组件，表单里的版本号与 rev 已经过期，重取一次。
 async function onWidgetPublished({ name, referencesUpdated }) {
@@ -279,13 +318,13 @@ async function onWidgetPublished({ name, referencesUpdated }) {
             </el-scrollbar>
         </aside>
 
-        <!-- 中：五元素编辑 -->
+        <!-- 中：五元素编辑 + 题目主数据 -->
         <section class="studio__editor">
             <el-empty
                 v-if="!selectedKey"
                 description="从左侧选择一道题目"
             />
-            <div v-else v-loading="detailLoading" class="studio__editor-inner">
+            <div v-else class="studio__editor-inner">
                 <header class="studio__editor-head">
                     <h3>{{ detail?.title || selectedKey }}</h3>
                     <span class="tip">
@@ -294,16 +333,29 @@ async function onWidgetPublished({ name, referencesUpdated }) {
                     </span>
                 </header>
 
-                <PageForm
-                    v-if="detail"
-                    :key="selectedKey"
-                    :puzzle-key="selectedKey"
-                    :detail="detail"
-                    :media="media"
-                    :widgets="widgets"
-                    :folders="folders"
-                    @saved="onSaved"
-                />
+                <el-tabs v-model="editorTab" class="studio__editor-tabs">
+                    <el-tab-pane label="页面内容" name="page">
+                        <div v-loading="detailLoading">
+                            <PageForm
+                                v-if="detail"
+                                :key="selectedKey"
+                                :puzzle-key="selectedKey"
+                                :detail="detail"
+                                :media="media"
+                                :widgets="widgets"
+                                :folders="folders"
+                                @saved="onSaved"
+                            />
+                        </div>
+                    </el-tab-pane>
+                    <el-tab-pane label="题目主数据" name="meta">
+                        <PuzzleMetaForm
+                            :row="selectedRow"
+                            :readonly="!canEditMeta"
+                            @saved="onMetaSaved"
+                        />
+                    </el-tab-pane>
+                </el-tabs>
             </div>
         </section>
 
@@ -347,7 +399,7 @@ async function onWidgetPublished({ name, referencesUpdated }) {
                 </el-form-item>
             </el-form>
             <p class="tip">
-                排序、提示点奖励与答案仍由「题库」页维护；这里只建题目主数据，页面内容保存后才会生效。
+                排序、提示点奖励与答案建好后在中间栏的「题目主数据」标签里填；这里只建题目主数据，页面内容保存后才会生效。
             </p>
             <template #footer>
                 <el-button @click="createOpen = false">取消</el-button>
@@ -451,6 +503,10 @@ async function onWidgetPublished({ name, referencesUpdated }) {
 
 .studio__tabs {
     min-height: 200px;
+}
+
+.studio__editor-tabs {
+    margin-top: -6px;
 }
 
 .tip {

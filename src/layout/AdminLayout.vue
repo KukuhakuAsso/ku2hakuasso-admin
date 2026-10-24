@@ -54,9 +54,6 @@
         <el-menu-item index="/tips">
           <el-icon><Coin /></el-icon><span>Tips 与规则</span>
         </el-menu-item>
-        <el-menu-item index="/puzzles">
-          <el-icon><Notebook /></el-icon><span>题库</span>
-        </el-menu-item>
         <el-menu-item v-if="auth.can('pz.content.edit')" index="/pz">
           <el-icon><EditPen /></el-icon><span>出题台</span>
         </el-menu-item>
