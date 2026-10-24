@@ -30,8 +30,17 @@
       <el-table-column label="用户名" min-width="140">
         <template #default="{ row }">{{ pick(row, "username") || "—" }}</template>
       </el-table-column>
-      <el-table-column label="曾用名" min-width="120">
-        <template #default="{ row }">{{ pick(row, "previousUsername") || "—" }}</template>
+      <el-table-column label="曾用名" min-width="140">
+        <template #default="{ row }">
+          <span
+            v-if="previousUsernamesOf(row).length"
+            class="usernames"
+            :title="previousUsernamesOf(row).join('、')"
+          >
+            {{ previousUsernamesOf(row).join("、") }}
+          </span>
+          <span v-else>—</span>
+        </template>
       </el-table-column>
       <el-table-column label="角色" width="100">
         <template #default="{ row }">{{ pick(row, "role") || "—" }}</template>
@@ -356,6 +365,25 @@ async function showContact(row) {
 }
 
 // ---- 曾用名 ----
+// 玩家列表项里的曾用名现在是 previousUsernames 数组（按服务端给的顺序，包含全部曾用名）；
+// 旧版本接口只有 previousUsername 单值，两种都兼容，避免前后端发布不同步时列直接空掉。
+function previousUsernamesOf(row) {
+    const list = pick(row, "previousUsernames", "previous_usernames");
+    if (Array.isArray(list)) {
+        return list.map((item) => String(item ?? "").trim()).filter(Boolean);
+    }
+    // 数组字段给成单值（旧后端 / 过渡期）也按一条处理，不要丢掉
+    const single = pick(
+        row,
+        "previousUsernames",
+        "previous_usernames",
+        "previousUsername",
+        "previous_username",
+    );
+    const text = String(single ?? "").trim();
+    return text ? [text] : [];
+}
+
 const usernamesDialog = reactive({ visible: false, loading: false, list: [] });
 
 async function showUsernames(row) {
@@ -398,5 +426,14 @@ onMounted(() => {
 .sub {
     color: var(--el-text-color-secondary);
     font-size: 12px;
+}
+/* 曾用名可能有多条：单行显示，超出省略，完整列表看 title */
+.usernames {
+    display: inline-block;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    vertical-align: bottom;
 }
 </style>
