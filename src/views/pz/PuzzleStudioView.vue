@@ -15,6 +15,7 @@ import PuzzleMetaForm from "@/components/pz/PuzzleMetaForm.vue";
 import MediaPanel from "@/components/pz/MediaPanel.vue";
 import WidgetPanel from "@/components/pz/WidgetPanel.vue";
 import FolderPanel from "@/components/pz/FolderPanel.vue";
+import HintsPanel from "@/components/pz/HintsPanel.vue";
 
 const auth = useAuthStore();
 const canPublishWidget = computed(() => auth.can("pz.widget.publish"));
@@ -367,6 +368,16 @@ async function onWidgetPublished({ name, referencesUpdated }) {
                         :puzzle-key="selectedKey"
                         @changed="media = $event"
                     />
+                </el-tab-pane>
+                <el-tab-pane label="提示" name="hints">
+                    <!-- 提示保存也会让 page_rev +1：按服务端 rev 重取一次页面草稿 -->
+                    <HintsPanel
+                        v-if="selectedKey"
+                        :key="selectedKey"
+                        :puzzle-key="selectedKey"
+                        @saved="onSaved"
+                    />
+                    <p v-else class="tip">从左侧选择一道题目后再维护提示</p>
                 </el-tab-pane>
                 <el-tab-pane v-if="canPublishWidget" label="组件" name="widget">
                     <WidgetPanel @changed="widgets = $event" @published="onWidgetPublished" />

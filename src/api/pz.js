@@ -132,6 +132,19 @@ export const getPuzzlePage = async (puzzleKey) => {
 export const putPuzzlePage = (puzzleKey, body) =>
     put(`/admin/pz/puzzle/${key(puzzleKey)}/page`, body);
 
+// ---------- 预置提示（api-10 §10.12） ----------
+
+// 读某题提示草稿（含正文）：{ rev, hints: [{ id, ord, name, content, cost, createdAt, updatedAt }] }
+export const getPuzzleHints = async (puzzleKey) => {
+    const data = await get(`/admin/pz/puzzle/${key(puzzleKey)}/hints`);
+    return data ?? { rev: 0, hints: [] };
+};
+
+// 整表保存：按数组顺序重排 ord，不带 id = 新增，未出现的已有 id = 删除（不退款）。
+// 每次保存成功 puzzle.page_rev 严格 +1。
+export const putPuzzleHints = (puzzleKey, hints) =>
+    put(`/admin/pz/puzzle/${key(puzzleKey)}/hints`, { hints });
+
 // ---------- 目录 ----------
 
 // 目录列表：[{ key, title, ord, enabled, unlock, createdAt, updatedAt }]

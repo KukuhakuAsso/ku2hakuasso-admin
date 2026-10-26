@@ -1,4 +1,4 @@
-import { createRouter, createWebHistory } from "vue-router";
+import { createRouter, createWebHashHistory } from "vue-router";
 import { useAuthStore } from "@/stores/auth";
 
 // 子项目部署于主站 /admin/ 路径下，路由 base 与 vite base 保持一致
