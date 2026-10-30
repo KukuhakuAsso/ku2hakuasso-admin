@@ -354,7 +354,7 @@ async function sendCode() {
         const data = await apiSendRegisterCode(
             buildCodePayload(emailCheck.value),
         );
-        sentEmail.value = data?.email || emailCheck.value;
+        sentEmail.value = emailCheck.value || data?.email ;
         step.value = "verify";
         captchaRef.value?.markUsed();
         captchaToken.value = "";
