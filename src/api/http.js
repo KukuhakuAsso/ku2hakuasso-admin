@@ -1,7 +1,7 @@
 // 统一请求封装
 // 管理端 API 前缀由 VITE_API_BASE_PATH 配置，并映射到后端 /api/* 路径。
 // 与站点其它子项目保持一致；登录态为 Bearer access_token。
-import { apiConfig, buildApiUrl, getApiHeaders } from "@/config/api";
+import { apiConfig, buildApiUrl, getApiHeaders, isApiUrl, resolveServerUrl } from "@/config/api";
 
 export class ApiError extends Error {
     constructor(status, message, detail) {
@@ -202,3 +202,37 @@ export const get = (path, params) => request(`${path}${buildQuery(params)}`);
 export const post = (path, body) => request(path, { method: "POST", body });
 export const put = (path, body) => request(path, { method: "PUT", body });
 export const del = (path) => request(path, { method: "DELETE" });
+
+// ---------- 二进制通道（图片附件） ----------
+// 邮件 / 求提示附件的 url 是受保护路径（`/api/msg/media/<id>`，会 302 到对象存储的短签名地址），
+// 响应体不是 JSON 信封，所以不能走 request()。这里复用同一套令牌与刷新逻辑：
+// 401 先刷新令牌再重试一次；只有指向本端 API 的地址才带令牌与 Cookie（信任边界）。
+export async function fetchWithAuth(url, { retried = false } = {}) {
+    const trusted = isApiUrl(url);
+    const headers = trusted ? getApiHeaders() : {};
+    const token = trusted ? getToken() : null;
+    if (token) headers.Authorization = `Bearer ${token}`;
+
+    const response = await fetch(url, {
+        headers,
+        credentials: trusted ? "include" : "omit",
+    });
+
+    if (!trusted || response.status !== 401 || retried) return response;
+
+    const refreshed = await refreshSession();
+    if (!refreshed) return response;
+    return fetchWithAuth(url, { retried: true });
+}
+
+// 取受保护图片：先按本端 API 前缀重写路径，再带令牌取字节，交给调用方转 blob URL。
+export async function fetchMediaBlob(rawUrl) {
+    const target = resolveServerUrl(rawUrl);
+    if (!target) throw new Error("图片地址为空");
+
+    const response = await fetchWithAuth(target);
+    if (!response.ok) {
+        throw new Error(`图片加载失败（${response.status}）`);
+    }
+    return response.blob();
+}
