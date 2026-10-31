@@ -44,6 +44,21 @@
                                 row.lastReply?.content || "（尚未回复）"
                             }}</pre>
                         </div>
+                        <!-- 申诉截图（2026-10-31 起）：lastAppeal 自带 attachments，
+                             media 已对 moderation.mute 放行 -->
+                        <div class="expand__block">
+                            <p class="expand__title">申诉截图</p>
+                            <AttachmentGallery
+                                :items="row.lastAppeal?.attachments"
+                                size="large"
+                            />
+                            <p
+                                v-if="!row.lastAppeal?.attachments?.length"
+                                class="expand__body"
+                            >
+                                （无附件）
+                            </p>
+                        </div>
                     </div>
                 </template>
             </el-table-column>
@@ -215,6 +230,7 @@ import { unbanPlayer } from "@/api/players";
 import { unbanTeam } from "@/api/teams";
 import { useCursorPage } from "@/composables/useCursorPage";
 import PageNav from "@/components/PageNav.vue";
+import AttachmentGallery from "@/components/AttachmentGallery.vue";
 import { fmtTime } from "@/utils/format";
 
 const auth = useAuthStore();

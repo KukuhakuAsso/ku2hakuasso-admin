@@ -19,6 +19,8 @@
             <div class="expand-block">
               <span class="expand-label">问题</span>
               <p class="expand-text">{{ row.question || "—" }}</p>
+              <!-- 提问截图（2026-10-31 起）：报价前就能看，是定价依据 -->
+              <AttachmentGallery :items="row.attachments" size="large" />
             </div>
             <div class="expand-block">
               <span class="expand-label">
@@ -184,6 +186,7 @@ import {
 } from "@/api/msg";
 import { useCursorPage } from "@/composables/useCursorPage";
 import PageNav from "@/components/PageNav.vue";
+import AttachmentGallery from "@/components/AttachmentGallery.vue";
 import { fmtTime, HINT_STATUS, statusMeta } from "@/utils/format";
 
 const auth = useAuthStore();

@@ -91,7 +91,14 @@
     />
 
     <!-- 邮件详情抽屉：mail（当前这封）+ replyChain（它回复过的链）+ 官方回复 -->
-    <el-drawer v-model="drawer.visible" size="620px" :title="drawerTitle">
+    <el-drawer v-model="drawer.visible" size="620px">
+      <template #header>
+        <!-- 自定义标题头：主题可能很长（甚至没有空格），必须能截断，
+             否则长串会把头部的关闭按钮顶出抽屉可视区 -->
+        <div class="drawer-head">
+          <span class="drawer-head__title" :title="drawerTitle">{{ drawerTitle }}</span>
+        </div>
+      </template>
       <div class="mail-detail">
         <div class="mail-meta">
           <span class="label">主题</span>
@@ -123,6 +130,7 @@
             </div>
             <div class="msg-subject">{{ msg.subject }}</div>
             <div class="msg-bubble">{{ msg.content }}</div>
+            <AttachmentGallery :items="msg.attachments" />
           </div>
         </template>
       </div>
@@ -164,9 +172,10 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref } from "vue";
 import { ElMessage } from "element-plus";
 import { useRoute } from "vue-router";
 import { useAuthStore } from "@/stores/auth";
-import { listMails, getMail, replyMail } from "@/api/msg";
+import { listMails, getMail, replyMail, markMailRead } from "@/api/msg";
 import { useCursorPage } from "@/composables/useCursorPage";
 import PageNav from "@/components/PageNav.vue";
+import AttachmentGallery from "@/components/AttachmentGallery.vue";
 import {
   fmtTime,
   MAIL_CHANNEL_OPTIONS,
@@ -210,19 +219,16 @@ const mail = ref(null);
 const messages = ref([]);
 
 // 详情请求的序号：只接受「最新一次请求且仍是同一封邮件」的响应，
-// 避免切到 B 之后 A 的迟到响应、或轮询与手动刷新的旧响应覆盖界面
+// 避免切到 B 之后 A 的迟到响应、或手动刷新的旧响应覆盖界面
 let detailSeq = 0;
 
 function startPolling() {
   stopPolling();
   pollTimer = setInterval(() => {
-    if (drawer.visible) {
-      // 详情请求还没回来就跳过这一轮：否则每轮都会把上一轮判为过期，
-      // 响应全被丢弃、loading 也永远清不掉（慢接口时抽屉会卡在骨架屏）。
-      // 手动「刷新」按钮不受这个限制。
-      if (drawer.mailId && !drawer.loading) loadMessages();
-      return;
-    }
+    // 抽屉打开时一律不刷新：操作员正在读对话 / 写回复，界面不该自己变
+    //（自动替换 mail + replyChain 会让人读一半内容跳掉）。关掉抽屉后下一轮自动继续。
+    // 抽屉里的「刷新」按钮仍然可以手动拉最新。
+    if (drawer.visible) return;
 
     // 列表：只在第一页自动刷新。first() 会把游标栈与页码重置到第 1 页，
     // 操作员正在翻旧邮件时不能被每 10 秒拽回最新页；请求进行中也跳过，避免叠加。
@@ -282,12 +288,34 @@ async function loadMessages() {
       messages.value.push(mail.value);
     }
     messages.value.push(...chain);
+
+    // 打开（或手动刷新）一封未读邮件 → 逐封标已读。幂等，重复调用无副作用。
+    const unreadId = Number(mail.value?.unread) === 1 ? mail.value.mailId : null;
+    if (unreadId) void markActiveRead(unreadId);
   } catch (err) {
     // 被替换的请求失败不打扰操作员
     if (seq !== detailSeq || requestedId !== drawer.mailId) return;
     ElMessage.error(err.message);
   } finally {
     if (seq === detailSeq) drawer.loading = false;
+  }
+}
+
+// 逐封已读：只清掉这一封的标记（列表里那一行的未读也随之归零）。
+// mailId 由调用方显式传入，不在 await 之后读 drawer.mailId —— 那时可能已经切到别的邮件。
+async function markActiveRead(mailId) {
+  try {
+    await markMailRead(mailId);
+    if (mail.value?.mailId === mailId) {
+      mail.value.unread = 0;
+    }
+    for (const item of list.value) {
+      if (item.mailId === mailId) {
+        item.unread = 0;
+      }
+    }
+  } catch {
+    // 标记失败不打扰操作员：正文已经打开了，下次刷新会重新对齐未读状态
   }
 }
 
@@ -336,6 +364,38 @@ onBeforeUnmount(() => {
   color: #909399;
   font-size: 12px;
 }
+
+/* 抽屉标题头：标题占满剩余宽度并在必要时省略，关闭按钮永远留在抽屉内。
+   关键是给标题所在的 flex 子项 min-width: 0 —— 默认 min-width: auto 时，
+   一长串没有断点的文字（中文主题、链接、长编号）会把整行撑得比抽屉还宽，
+   关闭按钮就被挤到抽屉外面去了。 */
+:deep(.el-drawer__header) {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.drawer-head {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.drawer-head__title {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+:deep(.el-drawer__close-btn) {
+  flex: 0 0 auto;
+  margin: 0;
+}
+
 .reply-count {
   margin-left: 8px;
 }
@@ -350,6 +410,11 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 8px;
   font-size: 13px;
+}
+/* 正文区的主题同样可能是长串：允许在任意位置换行，不撑破抽屉 */
+.mail-meta > span {
+  overflow-wrap: anywhere;
+  min-width: 0;
 }
 .mail-meta .label {
   color: #909399;

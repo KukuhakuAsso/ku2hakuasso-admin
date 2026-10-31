@@ -79,6 +79,50 @@ export function buildApiUrl(path) {
     return `${base}${prefix}${safePath}`;
 }
 
+function apiOrigin() {
+    if (typeof window === "undefined") return "";
+    return window.location.origin;
+}
+
+// 后端下发的资源地址一律是它自身的绝对路径（如邮件 / 求提示附件的 `/api/msg/media/12`），
+// 而本端实际走的是 `/api-admin`（开发，代理重写到 /api）或 `/api-mist`（生产），
+// 直接拿 `/api/...` 会打到静态站点上 404，所以统一在这里换成本端前缀。
+// 外链与 blob/data 原样返回（也不给它带凭证，见 isApiUrl）。
+export function resolveServerUrl(path) {
+    const raw = String(path ?? "").trim();
+    if (!raw) return "";
+    if (/^(?:https?:)?\/\//i.test(raw) || /^(?:blob|data):/i.test(raw)) {
+        return raw;
+    }
+    if (raw.startsWith("/api/")) {
+        const base = (apiConfig.baseUrl || "").replace(/\/+$/, "");
+        const prefix = apiConfig.basePath || "/api";
+        return `${base}${prefix}${raw.slice("/api".length)}`;
+    }
+    return raw;
+}
+
+// 信任边界：只有指向本端 API 的地址才带令牌与 Cookie。
+export function isApiUrl(raw) {
+    const path = String(raw || "").trim();
+    if (!path) return false;
+    if (!/^(?:https?:)?\/\//i.test(path) && !path.startsWith("/")) return false;
+
+    let parsed;
+    try {
+        parsed = new URL(path, apiOrigin() || "http://localhost");
+    } catch {
+        return false;
+    }
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return false;
+    if (apiOrigin() && parsed.origin !== apiOrigin()) return false;
+
+    const prefix = (apiConfig.basePath || "/api").replace(/\/+$/, "");
+    return (
+        parsed.pathname === prefix || parsed.pathname.startsWith(`${prefix}/`)
+    );
+}
+
 // 生成通用请求头；处于测试环境且配置了测试票据时，额外带上 X-Mistarg-Test-Ticket。
 export function getApiHeaders(extra = {}) {
     const headers = {
