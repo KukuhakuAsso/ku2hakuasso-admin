@@ -188,6 +188,7 @@ import { useCursorPage } from "@/composables/useCursorPage";
 import PageNav from "@/components/PageNav.vue";
 import AttachmentGallery from "@/components/AttachmentGallery.vue";
 import { fmtTime, HINT_STATUS, statusMeta } from "@/utils/format";
+import { extractErrorMessage } from "@/api/errors";
 
 const auth = useAuthStore();
 // 写操作需要 msg.hint.handle（admin 由 store 的 can() 直通）
@@ -316,7 +317,7 @@ async function submitForm() {
         formDialog.visible = false;
         first();
     } catch (err) {
-        ElMessage.error(err.message);
+        ElMessage.error(extractErrorMessage(err));
     } finally {
         formDialog.loading = false;
         busyKey.value = "";
@@ -340,7 +341,7 @@ async function declineCheaper(row) {
         ElMessage.success("已拒绝降价，当前报价已标记为最低报价");
         first();
     } catch (err) {
-        ElMessage.error(err.message);
+        ElMessage.error(extractErrorMessage(err));
     } finally {
         busyKey.value = "";
     }
@@ -369,7 +370,7 @@ async function rejectRow(row) {
         ElMessage.success("已拒绝");
         first();
     } catch (err) {
-        ElMessage.error(err.message);
+        ElMessage.error(extractErrorMessage(err));
     } finally {
         busyKey.value = "";
     }
@@ -401,7 +402,7 @@ function stopPolling() {
 }
 
 onMounted(() => {
-    first().catch((err) => ElMessage.error(err.message));
+    first().catch((err) => ElMessage.error(extractErrorMessage(err)));
     startPolling();
 });
 

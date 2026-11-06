@@ -118,6 +118,7 @@ import { ElMessage, ElMessageBox } from "element-plus";
 import { useAuthStore } from "@/stores/auth";
 import { grantTips, getTipsRule, putTipsRule } from "@/api/tips";
 import { listTeams } from "@/api/teams";
+import { extractErrorMessage } from "@/api/errors";
 
 const auth = useAuthStore();
 
@@ -130,7 +131,7 @@ async function loadRule() {
         const data = await getTipsRule();
         rule.value = data?.rule || data;
     } catch (err) {
-        ElMessage.error(err.message);
+        ElMessage.error(extractErrorMessage(err));
     } finally {
         ruleLoading.value = false;
     }
@@ -175,7 +176,7 @@ async function loadTeams() {
         }
         teamOptions.value = items;
     } catch (err) {
-        ElMessage.error(err.message);
+        ElMessage.error(extractErrorMessage(err));
     } finally {
         teamLoading.value = false;
     }
@@ -242,7 +243,7 @@ async function submitGrant() {
         grant.idem_key = "";
     } catch (err) {
         // 失败时保留幂等键：可能是响应丢了而服务端已落库，重试同一笔不会重复发放
-        ElMessage.error(err.message);
+        ElMessage.error(extractErrorMessage(err));
     } finally {
         grant.loading = false;
     }
@@ -278,7 +279,7 @@ async function submitEditRule() {
         ElMessage.success("规则已更新（立即生效）");
         editDialog.visible = false;
     } catch (err) {
-        ElMessage.error(err.message);
+        ElMessage.error(extractErrorMessage(err));
     } finally {
         editDialog.loading = false;
     }

@@ -12,14 +12,18 @@ import { del, get, post, put } from "./http";
 
 const key = (value) => encodeURIComponent(String(value ?? ""));
 
-// ---------- 题目主数据（标题 / 排序 / 奖励 / 答案 / 启用） ----------
+// ---------- 题目主数据（标题 / 排序 / 奖励 / 答案 / 启用 / 出题人） ----------
 
-// 题库列表：items 字段为 key / title / ord / archiveId / tipsReward / enabled。
-// staff 可读；写（PUT）仅 admin。
+// 题库列表：items 字段为 key / title / ord / archiveId / tipsReward / enabled，
+// 另有 authorId / authorUsername。
+// 2026-11-05 起严格隔离：admin 返回全部；持 pz.content.edit 的 staff 只返回自己的题；
+// 无该权限的 staff 返回空列表。
+// answer 只对 admin 或「持有 pz.content.edit 且是该题作者」返回，无权限时字段不存在（不是 null）。
 export const listPuzzles = () => get("/admin/puzzles");
 
 // 按需提交字段：更新时未传字段保持原值，新增时使用默认值。
-// 可提交 title / ord / archive_id / tips_reward / enabled / answer。
+// 可提交 title / ord / archive_id / tips_reward / enabled / answer / author_id。
+// author_id 仅 admin 可传（staff 传 → 403）；新建时 author_id = 当前账号。
 export const putPuzzle = (puzzleKey, body) =>
     put(`/admin/puzzles/${key(puzzleKey)}`, body);
 
@@ -145,14 +149,35 @@ export const getPuzzleHints = async (puzzleKey) => {
 export const putPuzzleHints = (puzzleKey, hints) =>
     put(`/admin/pz/puzzle/${key(puzzleKey)}/hints`, { hints });
 
+// ---------- 题目预览（管理端下发） ----------
+
+// 作者/admin 的全量草稿预览：跳过进度解锁、停用题也能预览、solved 恒为 false、
+// 提示全部 unlocked 且带正文。字段与嵌套和玩家 view 完全一致，只有资源 URL 换成管理端路径：
+//   /api/puzzle/media/<id>        → /api/admin/pz/media/<id>
+//   /api/puzzle/asset/<n>/<v>     → /api/admin/pz/puzzle/<key>/asset/<n>/<v>
+// 这些 URL 需要鉴权，必须经 fetchResource/resolveServerUrl 取 blob，不能直接塞给 <img>。
+export const getPuzzlePreview = async (puzzleKey) => {
+    const data = await get(`/admin/pz/puzzle/${key(puzzleKey)}/preview`);
+    return data?.puzzle ?? null;
+};
+
 // ---------- 目录 ----------
 
-// 目录列表：[{ key, title, ord, enabled, unlock, createdAt, updatedAt }]
+// 目录列表：[{ key, title, ord, enabled, unlock, ownerId, ownerUsername, createdAt, updatedAt }]
+// 2026-11-05 起按目录所有人隔离：admin 返回全部；staff 只返回 owner_id = 自己的目录。
 export const listFolders = () => get("/admin/pz/folders");
 
 // 新建或更新目录（幂等 upsert）；key 一旦建立不要改，赛事内视为标识。
-export const upsertFolder = ({ key: folderKey, title, ord, enabled, unlock }) =>
-    post("/admin/pz/folders", { key: folderKey, title, ord, enabled, unlock });
+// owner_id 仅 admin 可传（staff 传 → 403）；新建时 owner_id = 当前账号。
+export const upsertFolder = ({ key: folderKey, title, ord, enabled, unlock, ownerId }) =>
+    post("/admin/pz/folders", {
+        key: folderKey,
+        title,
+        ord,
+        enabled,
+        unlock,
+        ...(ownerId === undefined ? {} : { owner_id: ownerId }),
+    });
 
 // 删除目录；目录下仍有题目时后端返回 409（不会自动把题目置为未分组）。
 export const deleteFolder = (folderKey) =>

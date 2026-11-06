@@ -41,6 +41,7 @@ import { ref } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { useAuthStore } from "@/stores/auth";
 import { setContestStartAt, settleTips, recheckMilestones } from "@/api/maintenance";
+import { extractErrorMessage } from "@/api/errors";
 
 const auth = useAuthStore();
 const startAt = ref(null);
@@ -58,7 +59,7 @@ async function submitStartAt() {
         await setContestStartAt({ start_at: new Date(startAt.value).toISOString() });
         ElMessage.success("已设置开赛时间");
     } catch (err) {
-        ElMessage.error(err.message);
+        ElMessage.error(extractErrorMessage(err));
     } finally {
         startAtLoading.value = false;
     }
@@ -75,7 +76,7 @@ async function runSettleTips() {
         await settleTips();
         ElMessage.success("结算完成");
     } catch (err) {
-        ElMessage.error(err.message);
+        ElMessage.error(extractErrorMessage(err));
     } finally {
         settleLoading.value = false;
     }
@@ -92,7 +93,7 @@ async function runRecheck() {
         await recheckMilestones();
         ElMessage.success("重查完成");
     } catch (err) {
-        ElMessage.error(err.message);
+        ElMessage.error(extractErrorMessage(err));
     } finally {
         recheckLoading.value = false;
     }

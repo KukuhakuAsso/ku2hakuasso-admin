@@ -14,6 +14,7 @@ import {
     uploadToSignedUrl,
 } from "@/api/pz";
 import SourceEditor from "@/components/pz/SourceEditor.vue";
+import { extractErrorMessage } from "@/api/errors";
 
 const emit = defineEmits(["changed", "published"]);
 
@@ -36,7 +37,7 @@ async function load() {
         widgets.value = data?.widgets ?? [];
         emit("changed", widgets.value);
     } catch (error) {
-        ElMessage.error(error?.message || "组件列表加载失败");
+        ElMessage.error(extractErrorMessage(error, "组件列表加载失败"));
     } finally {
         loading.value = false;
     }
@@ -82,7 +83,7 @@ async function loadSource(name, version) {
         ElMessage.success(`已载入 ${name}@${version} 的源码，发布后会生成新版本`);
     } catch (error) {
         if (seq !== sourceSeq) return;
-        ElMessage.error(error?.message || "源码读取失败");
+        ElMessage.error(extractErrorMessage(error, "源码读取失败"));
     } finally {
         // 只有最新一次读取能收起 loading，否则会把新请求的转圈关掉
         if (seq === sourceSeq) loadingSource.value = "";
@@ -150,7 +151,7 @@ async function compile() {
         emit("published", { name, version: widget?.version, referencesUpdated: upgraded });
     } catch (error) {
         // 409 = 同一组件有更新的版本正在发布，重试即可
-        ElMessage.error(error?.message || "编译失败");
+        ElMessage.error(extractErrorMessage(error, "编译失败"));
     } finally {
         compiling.value = false;
         progress.value = 0;

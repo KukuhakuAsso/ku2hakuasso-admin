@@ -4,11 +4,16 @@
 import { computed, nextTick, onMounted, ref, shallowRef, watch } from "vue";
 import { ElMessage } from "element-plus";
 import { putPuzzlePage } from "@/api/pz";
+import { useAuthStore } from "@/stores/auth";
 import { ATTACHMENT_TYPES } from "@/config/pz";
 import { renderMarkdown } from "@/utils/miniMarkdown";
+import { describeApiError } from "@/api/errors";
 import SourceEditor from "@/components/pz/SourceEditor.vue";
 import UnlockForm from "@/components/pz/UnlockForm.vue";
 import PageMergeDialog from "@/components/pz/PageMergeDialog.vue";
+import PuzzlePreviewDialog from "@/components/pz/PuzzlePreviewDialog.vue";
+
+const auth = useAuthStore();
 
 const props = defineProps({
     puzzleKey: { type: String, required: true },
@@ -24,6 +29,18 @@ const emit = defineEmits(["saved"]);
 const saving = ref(false);
 const unlockRef = ref(null);
 const previewOpen = ref(false);
+const serverPreviewOpen = ref(false);
+
+// 服务端预览读的是**已保存**的草稿，本地未保存的改动不在里面 —— 打开前先说清楚
+function openServerPreview() {
+    const current = snapshot();
+    if (!initialized || current === null || current !== syncedPayload) {
+        ElMessage.warning(
+            "服务端预览读的是已保存的草稿，未保存的改动不会包含在内",
+        );
+    }
+    serverPreviewOpen.value = true;
+}
 
 const model = ref(emptyModel());
 
@@ -249,6 +266,19 @@ onMounted(syncBaseline);
 // 只有图片素材能当封面
 const imageMedia = computed(() =>
     props.media.filter((item) => item.mediaType === "image"),
+);
+
+// 目录按所有人隔离：staff 的下拉里只有自己的目录。
+// 若这道题当前挂在别人的目录里（历史数据 / 由 admin 指派的），staff 只能原样传回，
+// 移到别的目录或置为未分组会被后端 403。
+const foreignFolder = computed(() => {
+    const key = model.value.folderKey;
+    if (!key) return null;
+    const found = props.folders.find((item) => item.key === key);
+    return found ?? { key, title: "他人目录", foreign: true };
+});
+const folderLocked = computed(
+    () => Boolean(foreignFolder.value?.foreign) && !auth.isAdmin,
 );
 
 function mediaOfType(type) {
@@ -489,7 +519,7 @@ async function save() {
     try {
         payload = toPayload();
     } catch (error) {
-        ElMessage.error(error?.message || "参数格式有误");
+        ElMessage.error(extractErrorMessage(error, "参数格式有误"));
         return;
     }
 
@@ -510,7 +540,12 @@ async function save() {
         ElMessage.success(`已保存，rev ${model.value.rev}`);
         emit("saved", data);
     } catch (error) {
-        ElMessage.error(error?.message || "保存失败");
+        ElMessage.error(
+            describeApiError(error, {
+                fallback: "保存失败",
+                forbidden: "只能修改自己的题目；跨目录 / 他人题目需要 admin",
+            }),
+        );
     } finally {
         saving.value = false;
     }
@@ -527,6 +562,9 @@ async function save() {
                 <el-button size="small" @click="previewOpen = !previewOpen">
                     {{ previewOpen ? "关闭预览" : "预览描述" }}
                 </el-button>
+                <el-button size="small" @click="openServerPreview">
+                    服务端预览
+                </el-button>
                 <el-button size="small" type="primary" :loading="saving" @click="save">
                     保存页面
                 </el-button>
@@ -535,14 +573,29 @@ async function save() {
 
         <el-form label-width="88px" size="small" class="page-form__body">
             <el-form-item label="所属目录">
-                <el-select v-model="model.folderKey" clearable placeholder="未分组">
+                <el-select
+                    v-model="model.folderKey"
+                    clearable
+                    :disabled="folderLocked"
+                    placeholder="未分组"
+                >
                     <el-option
                         v-for="folder in folders"
                         :key="folder.key"
                         :label="`${folder.title}（${folder.key}）`"
                         :value="folder.key"
                     />
+                    <!-- 当前挂在他人目录：列表里拿不到它，补一个只读项，否则下拉会显示成空白 -->
+                    <el-option
+                        v-if="foreignFolder?.foreign"
+                        :key="foreignFolder.key"
+                        :label="`${foreignFolder.title}（${foreignFolder.key}）`"
+                        :value="foreignFolder.key"
+                    />
                 </el-select>
+                <span v-if="folderLocked" class="tip inline">
+                    该目录属于他人，只能原样保留；调整需 admin
+                </span>
             </el-form-item>
 
             <el-divider content-position="left">封面</el-divider>
@@ -745,6 +798,12 @@ async function save() {
             :media="media"
             @apply="onMergeApply"
             @closed="onMergeClosed"
+        />
+
+        <!-- 服务端全量草稿预览：真实资源（封面/内联图/附件/组件）走管理端下发路径 + blob -->
+        <PuzzlePreviewDialog
+            v-model="serverPreviewOpen"
+            :puzzle-key="puzzleKey"
         />
     </div>
 </template>

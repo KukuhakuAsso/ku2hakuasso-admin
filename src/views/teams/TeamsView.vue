@@ -162,6 +162,7 @@ import { useMuteActions } from "@/composables/useMuteActions";
 import PageNav from "@/components/PageNav.vue";
 import MuteDialog from "@/components/MuteDialog.vue";
 import { fmtTime, TEAM_STATUS, TEAM_STATUS_OPTIONS, statusMeta } from "@/utils/format";
+import { extractErrorMessage } from "@/api/errors";
 
 const auth = useAuthStore();
 const filters = reactive({ status: 0 });
@@ -248,7 +249,7 @@ async function submitBan() {
         // 封禁会覆盖禁言，禁言列表需要跟着刷新
         refreshMutes();
     } catch (err) {
-        ElMessage.error(err.message);
+        ElMessage.error(extractErrorMessage(err));
     } finally {
         banDialog.loading = false;
     }
@@ -266,7 +267,7 @@ async function unbanRow(row) {
         first();
         refreshMutes();
     } catch (err) {
-        ElMessage.error(err.message);
+        ElMessage.error(extractErrorMessage(err));
     }
 }
 
@@ -287,7 +288,7 @@ async function warnRow(row) {
         ElMessage.success("已警告");
         first();
     } catch (err) {
-        ElMessage.error(err.message);
+        ElMessage.error(extractErrorMessage(err));
     }
 }
 
@@ -307,7 +308,7 @@ async function renameRow(row) {
         ElMessage.success("已改队名");
         first();
     } catch (err) {
-        ElMessage.error(err.message);
+        ElMessage.error(extractErrorMessage(err));
     }
 }
 
@@ -326,7 +327,7 @@ async function dissolveRow(row) {
         ElMessage.success("已解散");
         first();
     } catch (err) {
-        ElMessage.error(err.message);
+        ElMessage.error(extractErrorMessage(err));
     }
 }
 

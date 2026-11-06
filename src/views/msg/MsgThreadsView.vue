@@ -182,6 +182,7 @@ import {
   MAIL_SOURCE,
   statusMeta,
 } from "@/utils/format";
+import { extractErrorMessage } from "@/api/errors";
 
 const POLL_INTERVAL_MS = 10000;
 let pollTimer = null;
@@ -295,7 +296,7 @@ async function loadMessages() {
   } catch (err) {
     // 被替换的请求失败不打扰操作员
     if (seq !== detailSeq || requestedId !== drawer.mailId) return;
-    ElMessage.error(err.message);
+    ElMessage.error(extractErrorMessage(err));
   } finally {
     if (seq === detailSeq) drawer.loading = false;
   }
@@ -341,16 +342,16 @@ async function sendReply() {
       drawer.content = "";
       drawer.visible = false;
     }
-    first().catch((err) => ElMessage.error(err.message));
+    first().catch((err) => ElMessage.error(extractErrorMessage(err)));
   } catch (err) {
-    if (targetId === drawer.mailId) ElMessage.error(err.message);
+    if (targetId === drawer.mailId) ElMessage.error(extractErrorMessage(err));
   } finally {
     drawer.sending = false;
   }
 }
 
 onMounted(() => {
-  first().catch((err) => ElMessage.error(err.message));
+  first().catch((err) => ElMessage.error(extractErrorMessage(err)));
   startPolling();
 });
 

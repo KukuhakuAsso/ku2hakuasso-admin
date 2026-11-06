@@ -1,23 +1,42 @@
 <script setup>
 // 目录面板：列表 / 新建或更新（幂等 upsert）/ 删除。
 // 目录下仍有题目时后端返回 409，这里把文案原样提示。
-import { ref } from "vue";
+//
+// 2026-11-05 起按目录所有人隔离：staff 只看到、只改得了自己的目录；
+// owner_id 只有 admin 能传（staff 传 → 403），历史目录 ownerId=null 时仅 admin 可看/可改。
+import { computed, ref } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { deleteFolder, listFolders, upsertFolder } from "@/api/pz";
+import { listAuthorCandidates } from "@/api/accounts";
+import { useAuthStore } from "@/stores/auth";
+import { describeApiError } from "@/api/errors";
 import UnlockForm from "@/components/pz/UnlockForm.vue";
 
 const emit = defineEmits(["changed"]);
 
+const auth = useAuthStore();
+const canAssignOwner = computed(() => auth.isAdmin);
+
 const folders = ref([]);
 const loading = ref(false);
+const ownerOptions = ref([]);
+const ownerLoading = ref(false);
 
 const dialog = ref(false);
 const saving = ref(false);
+const editingKey = ref("");
 const unlockRef = ref(null);
 const form = ref(emptyForm());
 
 function emptyForm() {
-    return { key: "", title: "", ord: 0, enabled: true, unlock: { kind: "sequence" } };
+    return {
+        key: "",
+        title: "",
+        ord: 0,
+        enabled: true,
+        unlock: { kind: "sequence" },
+        ownerId: null,
+    };
 }
 
 async function load() {
@@ -27,7 +46,12 @@ async function load() {
         folders.value = data?.folders ?? [];
         emit("changed", folders.value);
     } catch (error) {
-        ElMessage.error(error?.message || "目录列表加载失败");
+        ElMessage.error(
+            describeApiError(error, {
+                fallback: "目录列表加载失败",
+                forbidden: "没有出题权限，请联系 admin 授予 pz.content.edit",
+            }),
+        );
     } finally {
         loading.value = false;
     }
@@ -35,20 +59,41 @@ async function load() {
 
 load();
 
+async function loadOwnerOptions() {
+    if (!canAssignOwner.value || ownerOptions.value.length || ownerLoading.value) {
+        return;
+    }
+    ownerLoading.value = true;
+    try {
+        ownerOptions.value = await listAuthorCandidates();
+    } catch (error) {
+        ElMessage.error(
+            describeApiError(error, { fallback: "所有人候选加载失败" }),
+        );
+    } finally {
+        ownerLoading.value = false;
+    }
+}
+
 function openCreate() {
+    editingKey.value = "";
     form.value = emptyForm();
     dialog.value = true;
+    loadOwnerOptions();
 }
 
 function openEdit(row) {
+    editingKey.value = row.key;
     form.value = {
         key: row.key,
         title: row.title,
         ord: row.ord ?? 0,
         enabled: row.enabled !== false,
         unlock: row.unlock ?? { kind: "sequence" },
+        ownerId: row.ownerId ?? null,
     };
     dialog.value = true;
+    loadOwnerOptions();
 }
 
 async function save() {
@@ -71,12 +116,22 @@ async function save() {
             ord: Number(form.value.ord) || 0,
             enabled: form.value.enabled,
             unlock: unlockRef.value?.toUnlock?.() ?? { kind: "sequence" },
+            // 只有 admin 能改派；staff 传 owner_id 会被后端 403
+            ownerId:
+                canAssignOwner.value && form.value.ownerId
+                    ? Number(form.value.ownerId)
+                    : undefined,
         });
         ElMessage.success("已保存");
         dialog.value = false;
         await load();
     } catch (error) {
-        ElMessage.error(error?.message || "保存失败");
+        ElMessage.error(
+            describeApiError(error, {
+                fallback: "保存失败",
+                forbidden: "只能修改自己的目录；改派所有人需要 admin",
+            }),
+        );
     } finally {
         saving.value = false;
     }
@@ -98,7 +153,12 @@ async function remove(row) {
         ElMessage.success("已删除");
         await load();
     } catch (error) {
-        ElMessage.error(error?.message || "删除失败");
+        ElMessage.error(
+            describeApiError(error, {
+                fallback: "删除失败",
+                forbidden: "只能删除自己的目录",
+            }),
+        );
     }
 }
 
@@ -116,6 +176,11 @@ defineExpose({ reload: load, folders });
             <el-table-column prop="key" label="标识" min-width="110" />
             <el-table-column prop="title" label="名称" min-width="120" />
             <el-table-column prop="ord" label="排序" width="70" />
+            <el-table-column v-if="canAssignOwner" label="所有人" min-width="120">
+                <template #default="{ row }">
+                    {{ row.ownerUsername || (row.ownerId ? `#${row.ownerId}` : "—") }}
+                </template>
+            </el-table-column>
             <el-table-column label="启用" width="70">
                 <template #default="{ row }">
                     <el-tag :type="row.enabled ? 'success' : 'info'" size="small">
@@ -144,6 +209,7 @@ defineExpose({ reload: load, folders });
                     <el-input
                         v-model="form.key"
                         placeholder="如 wave1（建立后不要修改）"
+                        :disabled="Boolean(editingKey)"
                     />
                 </el-form-item>
                 <el-form-item label="名称">
@@ -154,6 +220,25 @@ defineExpose({ reload: load, folders });
                 </el-form-item>
                 <el-form-item label="启用">
                     <el-switch v-model="form.enabled" />
+                </el-form-item>
+                <!-- 仅 admin：改派目录所有人（POST body 的 owner_id） -->
+                <el-form-item v-if="canAssignOwner" label="所有人">
+                    <el-select
+                        v-model="form.ownerId"
+                        filterable
+                        clearable
+                        :loading="ownerLoading"
+                        placeholder="保持原所有人"
+                        style="width: 100%"
+                        @focus="loadOwnerOptions"
+                    >
+                        <el-option
+                            v-for="item in ownerOptions"
+                            :key="item.id"
+                            :label="`${item.label}（${item.role}）`"
+                            :value="item.id"
+                        />
+                    </el-select>
                 </el-form-item>
             </el-form>
             <UnlockForm ref="unlockRef" :model-value="form.unlock" />

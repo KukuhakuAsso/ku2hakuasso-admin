@@ -8,6 +8,7 @@
 import { computed, ref, watch } from "vue";
 import { ElMessage } from "element-plus";
 import { listMedia, signMedia, confirmMedia, uploadToSignedUrl } from "@/api/pz";
+import { describeApiError } from "@/api/errors";
 import { MEDIA_KINDS, validateMediaFile } from "@/config/pz";
 
 const props = defineProps({
@@ -64,7 +65,12 @@ async function load() {
     } catch (error) {
         // 迟到的错误同样别弹，它已经和当前选中的题无关了
         if (isStaleLoad(seq, key)) return;
-        ElMessage.error(error?.message || "素材列表加载失败");
+        ElMessage.error(
+            describeApiError(error, {
+                fallback: "素材列表加载失败",
+                forbidden: "只能查看自己名下的题目素材",
+            }),
+        );
     } finally {
         // 只有最新一次加载能收起 loading，否则会把新题的转圈关掉
         if (!isStaleLoad(seq, key)) loading.value = false;
@@ -143,7 +149,12 @@ async function upload() {
         // load() 内部会把清单 emit 给父级，这里不用再 emit 一次
         await load();
     } catch (error) {
-        ElMessage.error(error?.message || "上传失败");
+        ElMessage.error(
+            describeApiError(error, {
+                fallback: "上传失败",
+                forbidden: "只能给自己名下的题目上传素材",
+            }),
+        );
     } finally {
         uploading.value = false;
     }

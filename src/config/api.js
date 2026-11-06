@@ -9,7 +9,7 @@ const API_ENVIRONMENT_STORAGE_KEY = "admin_api_environment";
 export const apiConfig = {
     baseUrl: import.meta.env.VITE_API_BASE_URL || "",
     basePath: import.meta.env.VITE_API_BASE_PATH || "/api-mist",
-    apiVersion: import.meta.env.VITE_API_VERSION || "mistarg.2026.v1",
+    apiVersion: import.meta.env.VITE_API_VERSION || "mistarg.1.1.0",
     tokenKey: import.meta.env.VITE_TOKEN_KEY || "admin_token",
     devTicket: import.meta.env.VITE_DEV_TICKET || "",
     testTicket: import.meta.env.VITE_X_MISTARG_TEST_TICKET || "",
@@ -84,10 +84,11 @@ function apiOrigin() {
     return window.location.origin;
 }
 
-// 后端下发的资源地址一律是它自身的绝对路径（如邮件 / 求提示附件的 `/api/msg/media/12`），
-// 而本端实际走的是 `/api-admin`（开发，代理重写到 /api）或 `/api-mist`（生产），
-// 直接拿 `/api/...` 会打到静态站点上 404，所以统一在这里换成本端前缀。
-// 外链与 blob/data 原样返回（也不给它带凭证，见 isApiUrl）。
+// 后端下发的资源地址（预览里的封面 / 附件 / 组件 ESM 形如 /api/admin/pz/media/17，
+// 邮件 / 求提示附件形如 /api/msg/media/12）一律是它自身的绝对路径。
+// 这些路径不能直接丢给浏览器或 import()：部署在 /api-mist、开发在 /api-admin，
+// 都必须先换成当前构建的 API 前缀，否则会打到不存在的端点。
+// 外链与 blob:/data: 原样返回（也不给它带凭证，见 isApiUrl）。
 export function resolveServerUrl(path) {
     const raw = String(path ?? "").trim();
     if (!raw) return "";
@@ -95,9 +96,7 @@ export function resolveServerUrl(path) {
         return raw;
     }
     if (raw.startsWith("/api/")) {
-        const base = (apiConfig.baseUrl || "").replace(/\/+$/, "");
-        const prefix = apiConfig.basePath || "/api";
-        return `${base}${prefix}${raw.slice("/api".length)}`;
+        return buildApiUrl(raw.slice("/api".length));
     }
     return raw;
 }

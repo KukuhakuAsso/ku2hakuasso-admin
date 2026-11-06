@@ -205,6 +205,7 @@ import { listPlayers } from "@/api/players";
 import { listTeams } from "@/api/teams";
 import { notifyTargets, publishInternalAnnounce } from "@/api/msg";
 import { fmtTime, TEAM_STATUS, statusMeta } from "@/utils/format";
+import { extractErrorMessage } from "@/api/errors";
 
 const auth = useAuthStore();
 const router = useRouter();
@@ -269,7 +270,7 @@ async function searchPlayers(keyword) {
         mergePlayers(data?.items || []);
     } catch (err) {
         if (seq !== searchSeq) return;
-        ElMessage.error(err.message);
+        ElMessage.error(extractErrorMessage(err));
     } finally {
         // loading 归最新一次请求管，旧请求不要替它关掉
         if (seq === searchSeq) playerLoading.value = false;
@@ -310,7 +311,7 @@ async function loadTeams() {
         }
         teamOptions.value = items;
     } catch (err) {
-        ElMessage.error(err.message);
+        ElMessage.error(extractErrorMessage(err));
     } finally {
         teamLoading.value = false;
     }
@@ -376,13 +377,13 @@ async function sendNotify() {
         if (err?.status === 404) {
             ElMessage.error("有收件人不存在（账号或队伍 id 无效），请刷新后重试");
         } else if (err?.status === 409) {
-            ElMessage.error(err.message || "队伍已解散，无法发送");
+            ElMessage.error(extractErrorMessage(err, "队伍已解散，无法发送"));
         } else if (err?.status === 400) {
-            ElMessage.error(err.message || "请求不合法（收件人为空或超过 50 个）");
+            ElMessage.error(extractErrorMessage(err, "请求不合法（收件人为空或超过 50 个）"));
         } else if (err?.status === 403) {
             ElMessage.error("没有 msg.notify.send 权限");
         } else {
-            ElMessage.error(err.message || "发送失败");
+            ElMessage.error(extractErrorMessage(err, "发送失败"));
         }
     } finally {
         sending.value = false;
@@ -435,7 +436,7 @@ async function publishInternal() {
         if (err?.status === 403) {
             ElMessage.error("发布内部公告需要 admin 权限");
         } else {
-            ElMessage.error(err.message || "发布失败");
+            ElMessage.error(extractErrorMessage(err, "发布失败"));
         }
     } finally {
         publishing.value = false;

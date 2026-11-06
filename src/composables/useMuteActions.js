@@ -8,6 +8,7 @@ import {
     unmuteAccount,
     unmuteTeam,
 } from "@/api/moderation";
+import { extractErrorMessage } from "@/api/errors";
 
 // 列表单次最多返回 200 条且不分页，超出时 hasMore=true
 const LIST_LIMIT = 200;
@@ -219,7 +220,7 @@ export function useMuteActions(kind, onChanged = () => {}, { rows } = {}) {
                 onChanged();
                 return;
             }
-            ElMessage.error(err?.message || "解除禁言失败");
+            ElMessage.error(extractErrorMessage(err, "解除禁言失败"));
         }
     }
 

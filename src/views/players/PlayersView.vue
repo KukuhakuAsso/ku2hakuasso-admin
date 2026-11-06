@@ -185,6 +185,7 @@ import { useMuteActions } from "@/composables/useMuteActions";
 import PageNav from "@/components/PageNav.vue";
 import MuteDialog from "@/components/MuteDialog.vue";
 import { pick, fmtTime, ACCOUNT_STATUS, statusMeta } from "@/utils/format";
+import { extractErrorMessage } from "@/api/errors";
 
 const auth = useAuthStore();
 const router = useRouter();
@@ -272,7 +273,7 @@ async function submitBan() {
         // 封禁会覆盖禁言，禁言列表需要跟着刷新
         refreshMutes();
     } catch (err) {
-        ElMessage.error(err.message);
+        ElMessage.error(extractErrorMessage(err));
     } finally {
         banDialog.loading = false;
     }
@@ -292,7 +293,7 @@ async function toggleBan(row) {
             first();
             refreshMutes();
         } catch (err) {
-            ElMessage.error(err.message);
+            ElMessage.error(extractErrorMessage(err));
         }
     } else {
         openBan(row);
@@ -322,7 +323,7 @@ async function warnRow(row) {
         ElMessage.success("已警告");
         first();
     } catch (err) {
-        ElMessage.error(err.message);
+        ElMessage.error(extractErrorMessage(err));
     }
 }
 
@@ -342,7 +343,7 @@ async function renameRow(row) {
         ElMessage.success("已改名");
         first();
     } catch (err) {
-        ElMessage.error(err.message);
+        ElMessage.error(extractErrorMessage(err));
     }
 }
 
@@ -357,8 +358,8 @@ async function showContact(row) {
         const data = await getPlayerContact(row.id);
         contactDialog.text = JSON.stringify(data, null, 2);
     } catch (err) {
-        ElMessage.error(err.message);
-        contactDialog.text = String(err.message);
+        ElMessage.error(extractErrorMessage(err));
+        contactDialog.text = extractErrorMessage(err);
     } finally {
         contactDialog.loading = false;
     }
@@ -394,7 +395,7 @@ async function showUsernames(row) {
         const data = await getPlayerUsernames(row.id, { limit: 100 });
         usernamesDialog.list = data?.items || [];
     } catch (err) {
-        ElMessage.error(err.message);
+        ElMessage.error(extractErrorMessage(err));
     } finally {
         usernamesDialog.loading = false;
     }

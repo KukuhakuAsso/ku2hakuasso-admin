@@ -31,6 +31,9 @@
             </el-tag>
           </template>
         </el-table-column>
+        <el-table-column label="首次取题" width="180">
+          <template #default="{ row }">{{ fmtTime(row.firstTakenAt) }}</template>
+        </el-table-column>
         <el-table-column label="通过时间" width="180">
           <template #default="{ row }">{{ fmtTime(row.solvedAt) }}</template>
         </el-table-column>
@@ -43,7 +46,17 @@
         <el-table-column label="耗时" width="110">
           <template #default="{ row }">{{ fmtDuration(row.durationMs) }}</template>
         </el-table-column>
-        <el-table-column prop="attempts" label="尝试次数" width="90" />
+        <el-table-column label="提交次数" width="90">
+          <template #header>
+            <el-tooltip
+              content="含答错与已解出后的重复提交"
+              placement="top"
+            >
+              <span class="col-head">提交次数</span>
+            </el-tooltip>
+          </template>
+          <template #default="{ row }">{{ row.attempts ?? 0 }}</template>
+        </el-table-column>
       </el-table>
 
       <h4 class="mb mt">达成的里程碑</h4>
@@ -67,6 +80,7 @@ import { useRoute } from "vue-router";
 import { ElMessage } from "element-plus";
 import { getProgressTeam } from "@/api/progress";
 import { fmtTime, fmtDuration, TEAM_STATUS, statusMeta } from "@/utils/format";
+import { describeApiError } from "@/api/errors";
 
 const route = useRoute();
 const loading = ref(false);
@@ -82,7 +96,9 @@ onMounted(async () => {
         puzzles.value = data?.puzzles || [];
         milestones.value = data?.milestones || [];
     } catch (err) {
-        ElMessage.error(err.message);
+        ElMessage.error(
+            describeApiError(err, { forbidden: "队伍进度仅 admin 可查看" }),
+        );
     } finally {
         loading.value = false;
     }
@@ -95,5 +111,10 @@ onMounted(async () => {
 }
 .mt {
     margin-top: 24px;
+}
+
+.col-head {
+    border-bottom: 1px dashed currentColor;
+    cursor: help;
 }
 </style>

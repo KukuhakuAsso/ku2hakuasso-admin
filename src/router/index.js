@@ -70,28 +70,34 @@ const routes = [
                 meta: { requiresMuteOrBan: true },
             },
             {
+                // 进度监测四条接口 2026-11-06 起为 admin 专属（staff 一律 403），
+                // 路由与侧栏入口都按 admin 收口
                 path: "progress",
                 name: "progress",
                 component: () =>
                     import("@/views/progress/ProgressTeamsView.vue"),
+                meta: { requiresAdmin: true },
             },
             {
                 path: "progress/team/:id",
                 name: "progress-team",
                 component: () =>
                     import("@/views/progress/ProgressTeamView.vue"),
+                meta: { requiresAdmin: true },
             },
             {
                 path: "progress/matrix",
                 name: "progress-matrix",
                 component: () =>
                     import("@/views/progress/ProgressMatrixView.vue"),
+                meta: { requiresAdmin: true },
             },
             {
                 path: "progress/submissions",
                 name: "submissions",
                 component: () =>
                     import("@/views/progress/SubmissionsView.vue"),
+                meta: { requiresAdmin: true },
             },
             {
                 path: "audit",
