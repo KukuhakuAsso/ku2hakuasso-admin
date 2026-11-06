@@ -13,6 +13,11 @@ export const getMail = (id) => get(`/admin/msg/mails/${id}`);
 export const replyMail = (id, body) =>
     post(`/admin/msg/mails/${id}/reply`, body);
 
+// 逐封已读（POST /api/msg/mails/:id/read，与玩家端同一个接口）：
+// 无请求体、幂等、只标记这一封（不影响它回复过的链、也不影响同对话其它记录）。
+// 管理端打开一封未读邮件时调它，列表里的未读标记随之清零。
+export const markMailRead = (id) => post(`/msg/mails/${id}/read`);
+
 // ---------- 公告 ----------
 
 // 发布官方公告：subject（1–80）与 content（1–2000）都必填

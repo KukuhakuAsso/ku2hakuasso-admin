@@ -79,10 +79,16 @@ export function buildApiUrl(path) {
     return `${base}${prefix}${safePath}`;
 }
 
-// 后端下发的资源地址（预览里的封面 / 附件 / 组件 ESM）形如 /api/admin/pz/media/17。
+function apiOrigin() {
+    if (typeof window === "undefined") return "";
+    return window.location.origin;
+}
+
+// 后端下发的资源地址（预览里的封面 / 附件 / 组件 ESM 形如 /api/admin/pz/media/17，
+// 邮件 / 求提示附件形如 /api/msg/media/12）一律是它自身的绝对路径。
 // 这些路径不能直接丢给浏览器或 import()：部署在 /api-mist、开发在 /api-admin，
 // 都必须先换成当前构建的 API 前缀，否则会打到不存在的端点。
-// 外链与 blob:/data: 原样返回。
+// 外链与 blob:/data: 原样返回（也不给它带凭证，见 isApiUrl）。
 export function resolveServerUrl(path) {
     const raw = String(path ?? "").trim();
     if (!raw) return "";
@@ -93,6 +99,27 @@ export function resolveServerUrl(path) {
         return buildApiUrl(raw.slice("/api".length));
     }
     return raw;
+}
+
+// 信任边界：只有指向本端 API 的地址才带令牌与 Cookie。
+export function isApiUrl(raw) {
+    const path = String(raw || "").trim();
+    if (!path) return false;
+    if (!/^(?:https?:)?\/\//i.test(path) && !path.startsWith("/")) return false;
+
+    let parsed;
+    try {
+        parsed = new URL(path, apiOrigin() || "http://localhost");
+    } catch {
+        return false;
+    }
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return false;
+    if (apiOrigin() && parsed.origin !== apiOrigin()) return false;
+
+    const prefix = (apiConfig.basePath || "/api").replace(/\/+$/, "");
+    return (
+        parsed.pathname === prefix || parsed.pathname.startsWith(`${prefix}/`)
+    );
 }
 
 // 生成通用请求头；处于测试环境且配置了测试票据时，额外带上 X-Mistarg-Test-Ticket。
