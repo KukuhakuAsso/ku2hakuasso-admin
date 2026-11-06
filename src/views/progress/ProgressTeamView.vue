@@ -3,6 +3,15 @@
     <div class="toolbar">
       <el-button @click="$router.back()">返回</el-button>
       <h3 v-if="team">{{ team.name }}（#{{ team.teamId }}）</h3>
+      <el-button
+        v-if="team"
+        class="toolbar__right"
+        type="primary"
+        plain
+        @click="openHistory()"
+      >
+        答案记录
+      </el-button>
     </div>
 
     <el-skeleton v-if="loading" :rows="8" animated />
@@ -57,6 +66,13 @@
           </template>
           <template #default="{ row }">{{ row.attempts ?? 0 }}</template>
         </el-table-column>
+        <el-table-column label="操作" width="110" fixed="right">
+          <template #default="{ row }">
+            <el-button link type="primary" size="small" @click="openHistory(row)">
+              答案记录
+            </el-button>
+          </template>
+        </el-table-column>
       </el-table>
 
       <h4 class="mb mt">达成的里程碑</h4>
@@ -70,6 +86,14 @@
         </el-table-column>
       </el-table>
       <el-empty v-else description="暂无里程碑" />
+
+      <TeamSubmissionDialog
+        v-model="historyVisible"
+        :team-id="team.teamId"
+        :team-name="team.name"
+        :puzzle-key="historyKey"
+        :puzzles="puzzles"
+      />
     </template>
   </div>
 </template>
@@ -81,12 +105,21 @@ import { ElMessage } from "element-plus";
 import { getProgressTeam } from "@/api/progress";
 import { fmtTime, fmtDuration, TEAM_STATUS, statusMeta } from "@/utils/format";
 import { describeApiError } from "@/api/errors";
+import TeamSubmissionDialog from "@/components/TeamSubmissionDialog.vue";
 
 const route = useRoute();
 const loading = ref(false);
 const team = ref(null);
 const puzzles = ref([]);
 const milestones = ref([]);
+const historyVisible = ref(false);
+const historyKey = ref("");
+
+// row 为空表示查全队（题目筛选留在弹窗里改）
+function openHistory(row) {
+    historyKey.value = row?.key || "";
+    historyVisible.value = true;
+}
 
 onMounted(async () => {
     loading.value = true;
@@ -111,6 +144,10 @@ onMounted(async () => {
 }
 .mt {
     margin-top: 24px;
+}
+
+.toolbar__right {
+    margin-left: auto;
 }
 
 .col-head {
