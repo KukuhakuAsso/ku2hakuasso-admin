@@ -149,6 +149,18 @@ export const getPuzzleHints = async (puzzleKey) => {
 export const putPuzzleHints = (puzzleKey, hints) =>
     put(`/admin/pz/puzzle/${key(puzzleKey)}/hints`, { hints });
 
+// ---------- 题目预览（管理端下发） ----------
+
+// 作者/admin 的全量草稿预览：跳过进度解锁、停用题也能预览、solved 恒为 false、
+// 提示全部 unlocked 且带正文。字段与嵌套和玩家 view 完全一致，只有资源 URL 换成管理端路径：
+//   /api/puzzle/media/<id>        → /api/admin/pz/media/<id>
+//   /api/puzzle/asset/<n>/<v>     → /api/admin/pz/puzzle/<key>/asset/<n>/<v>
+// 这些 URL 需要鉴权，必须经 fetchResource/resolveServerUrl 取 blob，不能直接塞给 <img>。
+export const getPuzzlePreview = async (puzzleKey) => {
+    const data = await get(`/admin/pz/puzzle/${key(puzzleKey)}/preview`);
+    return data?.puzzle ?? null;
+};
+
 // ---------- 目录 ----------
 
 // 目录列表：[{ key, title, ord, enabled, unlock, ownerId, ownerUsername, createdAt, updatedAt }]

@@ -79,6 +79,22 @@ export function buildApiUrl(path) {
     return `${base}${prefix}${safePath}`;
 }
 
+// 后端下发的资源地址（预览里的封面 / 附件 / 组件 ESM）形如 /api/admin/pz/media/17。
+// 这些路径不能直接丢给浏览器或 import()：部署在 /api-mist、开发在 /api-admin，
+// 都必须先换成当前构建的 API 前缀，否则会打到不存在的端点。
+// 外链与 blob:/data: 原样返回。
+export function resolveServerUrl(path) {
+    const raw = String(path ?? "").trim();
+    if (!raw) return "";
+    if (/^(?:https?:)?\/\//i.test(raw) || /^(?:blob|data):/i.test(raw)) {
+        return raw;
+    }
+    if (raw.startsWith("/api/")) {
+        return buildApiUrl(raw.slice("/api".length));
+    }
+    return raw;
+}
+
 // 生成通用请求头；处于测试环境且配置了测试票据时，额外带上 X-Mistarg-Test-Ticket。
 export function getApiHeaders(extra = {}) {
     const headers = {

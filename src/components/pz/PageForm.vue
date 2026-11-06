@@ -11,6 +11,7 @@ import { describeApiError } from "@/api/errors";
 import SourceEditor from "@/components/pz/SourceEditor.vue";
 import UnlockForm from "@/components/pz/UnlockForm.vue";
 import PageMergeDialog from "@/components/pz/PageMergeDialog.vue";
+import PuzzlePreviewDialog from "@/components/pz/PuzzlePreviewDialog.vue";
 
 const auth = useAuthStore();
 
@@ -28,6 +29,18 @@ const emit = defineEmits(["saved"]);
 const saving = ref(false);
 const unlockRef = ref(null);
 const previewOpen = ref(false);
+const serverPreviewOpen = ref(false);
+
+// 服务端预览读的是**已保存**的草稿，本地未保存的改动不在里面 —— 打开前先说清楚
+function openServerPreview() {
+    const current = snapshot();
+    if (!initialized || current === null || current !== syncedPayload) {
+        ElMessage.warning(
+            "服务端预览读的是已保存的草稿，未保存的改动不会包含在内",
+        );
+    }
+    serverPreviewOpen.value = true;
+}
 
 const model = ref(emptyModel());
 
@@ -549,6 +562,9 @@ async function save() {
                 <el-button size="small" @click="previewOpen = !previewOpen">
                     {{ previewOpen ? "关闭预览" : "预览描述" }}
                 </el-button>
+                <el-button size="small" @click="openServerPreview">
+                    服务端预览
+                </el-button>
                 <el-button size="small" type="primary" :loading="saving" @click="save">
                     保存页面
                 </el-button>
@@ -782,6 +798,12 @@ async function save() {
             :media="media"
             @apply="onMergeApply"
             @closed="onMergeClosed"
+        />
+
+        <!-- 服务端全量草稿预览：真实资源（封面/内联图/附件/组件）走管理端下发路径 + blob -->
+        <PuzzlePreviewDialog
+            v-model="serverPreviewOpen"
+            :puzzle-key="puzzleKey"
         />
     </div>
 </template>

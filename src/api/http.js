@@ -1,7 +1,8 @@
 // 统一请求封装
 // 管理端 API 前缀由 VITE_API_BASE_PATH 配置，并映射到后端 /api/* 路径。
 // 与站点其它子项目保持一致；登录态为 Bearer access_token。
-import { apiConfig, buildApiUrl, getApiHeaders } from "@/config/api";
+import { apiConfig, buildApiUrl, getApiHeaders, resolveServerUrl } from "@/config/api";
+import { extractErrorMessage } from "@/api/errors";
 
 export class ApiError extends Error {
     constructor(status, message, detail) {
@@ -202,3 +203,36 @@ export const get = (path, params) => request(`${path}${buildQuery(params)}`);
 export const post = (path, body) => request(path, { method: "POST", body });
 export const put = (path, body) => request(path, { method: "PUT", body });
 export const del = (path) => request(path, { method: "DELETE" });
+
+// 受保护资源的二进制取回（素材、组件 ESM）。
+//
+// 这些路径走管理端鉴权，而原生 <img src> / <a href> / import() 都发不出 Authorization 头，
+// 所以必须先由 JS 取回再转 blob。path 可以是后端下发的 /api/admin/... 原始路径，
+// 这里统一经 resolveServerUrl() 换成本次构建的 API 前缀。
+//
+// 只处理 401 刷新重试一次；其余非 2xx 交给调用方（组件加载要区分 429 / 403 / 404）。
+export async function fetchResource(path, { accept = "*/*", retried = false } = {}) {
+    const headers = getApiHeaders({ Accept: accept });
+    const token = getToken();
+    if (token) headers.Authorization = `Bearer ${token}`;
+
+    const res = await fetch(resolveServerUrl(path), {
+        headers,
+        credentials: "include",
+    });
+
+    if (res.status === 401 && !retried) {
+        const refreshed = await refreshSession();
+        if (refreshed) return fetchResource(path, { accept, retried: true });
+    }
+
+    if (!res.ok) {
+        const payload = await res.json().catch(() => null);
+        throw new ApiError(
+            res.status,
+            extractErrorMessage(payload, `资源加载失败（${res.status}）`),
+            payload?.error,
+        );
+    }
+    return res;
+}
