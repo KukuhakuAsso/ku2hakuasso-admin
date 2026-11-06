@@ -44,7 +44,7 @@
       </el-table-column>
     </el-table>
 
-    <PageNav :page="page" :has-more="hasMore" :loading="loading" @prev="prev" @next="next" />
+    <PageNav :page="page" :has-more="hasMore" :loading="loading" @prev="run(prev)" @next="run(next)" />
   </div>
 </template>
 
@@ -56,6 +56,7 @@ import { listProgressTeams } from "@/api/progress";
 import { useCursorPage } from "@/composables/useCursorPage";
 import PageNav from "@/components/PageNav.vue";
 import { fmtTime, TEAM_STATUS, statusMeta } from "@/utils/format";
+import { describeApiError } from "@/utils/apiError";
 
 const router = useRouter();
 const filters = reactive({ status: "" });
@@ -63,16 +64,27 @@ const filters = reactive({ status: "" });
 const fetcher = (cursor) => listProgressTeams({ ...filters, cursor, limit: 50 });
 const { list, page, hasMore, loading, first, next, prev } = useCursorPage(fetcher);
 
+// useCursorPage 不吞异常：这里兜住，否则 403 只会变成一条无声的 unhandled rejection
+async function run(action) {
+    try {
+        await action();
+    } catch (err) {
+        ElMessage.error(
+            describeApiError(err, { forbidden: "队伍进度仅 admin 可查看" }),
+        );
+    }
+}
+
 function search() {
-    first();
+    run(first);
 }
 function reset() {
     filters.status = "";
-    first();
+    run(first);
 }
 function openTeam(row) {
     router.push(`/progress/team/${row.teamId}`);
 }
 
-onMounted(() => first());
+onMounted(() => run(first));
 </script>

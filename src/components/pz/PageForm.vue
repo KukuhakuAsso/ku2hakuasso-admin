@@ -4,11 +4,15 @@
 import { computed, nextTick, onMounted, ref, shallowRef, watch } from "vue";
 import { ElMessage } from "element-plus";
 import { putPuzzlePage } from "@/api/pz";
+import { useAuthStore } from "@/stores/auth";
 import { ATTACHMENT_TYPES } from "@/config/pz";
 import { renderMarkdown } from "@/utils/miniMarkdown";
+import { describeApiError } from "@/utils/apiError";
 import SourceEditor from "@/components/pz/SourceEditor.vue";
 import UnlockForm from "@/components/pz/UnlockForm.vue";
 import PageMergeDialog from "@/components/pz/PageMergeDialog.vue";
+
+const auth = useAuthStore();
 
 const props = defineProps({
     puzzleKey: { type: String, required: true },
@@ -249,6 +253,19 @@ onMounted(syncBaseline);
 // 只有图片素材能当封面
 const imageMedia = computed(() =>
     props.media.filter((item) => item.mediaType === "image"),
+);
+
+// 目录按所有人隔离：staff 的下拉里只有自己的目录。
+// 若这道题当前挂在别人的目录里（历史数据 / 由 admin 指派的），staff 只能原样传回，
+// 移到别的目录或置为未分组会被后端 403。
+const foreignFolder = computed(() => {
+    const key = model.value.folderKey;
+    if (!key) return null;
+    const found = props.folders.find((item) => item.key === key);
+    return found ?? { key, title: "他人目录", foreign: true };
+});
+const folderLocked = computed(
+    () => Boolean(foreignFolder.value?.foreign) && !auth.isAdmin,
 );
 
 function mediaOfType(type) {
@@ -510,7 +527,12 @@ async function save() {
         ElMessage.success(`已保存，rev ${model.value.rev}`);
         emit("saved", data);
     } catch (error) {
-        ElMessage.error(error?.message || "保存失败");
+        ElMessage.error(
+            describeApiError(error, {
+                fallback: "保存失败",
+                forbidden: "只能修改自己的题目；跨目录 / 他人题目需要 admin",
+            }),
+        );
     } finally {
         saving.value = false;
     }
@@ -535,14 +557,29 @@ async function save() {
 
         <el-form label-width="88px" size="small" class="page-form__body">
             <el-form-item label="所属目录">
-                <el-select v-model="model.folderKey" clearable placeholder="未分组">
+                <el-select
+                    v-model="model.folderKey"
+                    clearable
+                    :disabled="folderLocked"
+                    placeholder="未分组"
+                >
                     <el-option
                         v-for="folder in folders"
                         :key="folder.key"
                         :label="`${folder.title}（${folder.key}）`"
                         :value="folder.key"
                     />
+                    <!-- 当前挂在他人目录：列表里拿不到它，补一个只读项，否则下拉会显示成空白 -->
+                    <el-option
+                        v-if="foreignFolder?.foreign"
+                        :key="foreignFolder.key"
+                        :label="`${foreignFolder.title}（${foreignFolder.key}）`"
+                        :value="foreignFolder.key"
+                    />
                 </el-select>
+                <span v-if="folderLocked" class="tip inline">
+                    该目录属于他人，只能原样保留；调整需 admin
+                </span>
             </el-form-item>
 
             <el-divider content-position="left">封面</el-divider>

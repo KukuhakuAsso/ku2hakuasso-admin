@@ -88,12 +88,16 @@ import { fmtTime, fmtJson } from "@/utils/format";
 const LIVE_LABELS = {
     players: "玩家",
     teams: "队伍",
-    solves: "解出",
+    // 2026-11-06 起是「完成记录数」= 队伍×题目 的首次完成条数，重复答对不再累加，
+    // 与「玩家/队伍」不是同一维度，标签必须写清楚，否则容易被当成解题人次
+    solves: "已完成（队伍×题目）",
     messages: "消息",
 };
 
 const DAILY_LABELS = {
     ...LIVE_LABELS,
+    // daily 的 solves 口径文档未固定（按日汇总，可能含每日解出人次），不套用 live 的长文案
+    solves: "解出",
     date: "日期",
     day: "日期",
     statDate: "日期",

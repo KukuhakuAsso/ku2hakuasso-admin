@@ -9,7 +9,7 @@ const API_ENVIRONMENT_STORAGE_KEY = "admin_api_environment";
 export const apiConfig = {
     baseUrl: import.meta.env.VITE_API_BASE_URL || "",
     basePath: import.meta.env.VITE_API_BASE_PATH || "/api-mist",
-    apiVersion: import.meta.env.VITE_API_VERSION || "mistarg.2026.v1",
+    apiVersion: import.meta.env.VITE_API_VERSION || "mistarg.1.1.0",
     tokenKey: import.meta.env.VITE_TOKEN_KEY || "admin_token",
     devTicket: import.meta.env.VITE_DEV_TICKET || "",
     testTicket: import.meta.env.VITE_X_MISTARG_TEST_TICKET || "",

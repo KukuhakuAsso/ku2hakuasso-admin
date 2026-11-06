@@ -9,6 +9,7 @@ import { computed, ref } from "vue";
 import { ElMessage } from "element-plus";
 import { getPuzzlePage, listFolders, listPuzzles, listWidgets, putPuzzle } from "@/api/pz";
 import { pick } from "@/utils/format";
+import { describeApiError } from "@/utils/apiError";
 import { useAuthStore } from "@/stores/auth";
 import PageForm from "@/components/pz/PageForm.vue";
 import PuzzleMetaForm from "@/components/pz/PuzzleMetaForm.vue";
@@ -19,8 +20,12 @@ import HintsPanel from "@/components/pz/HintsPanel.vue";
 
 const auth = useAuthStore();
 const canPublishWidget = computed(() => auth.can("pz.widget.publish"));
-// PUT /admin/puzzles/:key（新增题目主数据）是 admin 专属，staff 只能编辑已有题目的页面
-const canCreatePuzzle = computed(() => auth.isAdmin);
+// 2026-11-05 起 PUT /admin/puzzles/:key 对持 pz.content.edit 的 staff 开放（admin 直通），
+// 但只能改自己的题；新建时 author_id 自动归当前账号
+const canCreatePuzzle = computed(
+    () => auth.isAdmin || auth.can("pz.content.edit"),
+);
+const myAccountId = computed(() => Number(auth.account?.id) || null);
 
 const puzzles = ref([]);
 const puzzleLoading = ref(false);
@@ -64,8 +69,13 @@ function titleOf(key) {
 const selectedRow = computed(
     () => puzzles.value.find((item) => item.key === selectedKey.value) ?? null,
 );
-// PUT /admin/puzzles/:key 是 admin 专属：非 admin 只读展示（与原「题库」页的权限一致）
-const canEditMeta = computed(() => auth.isAdmin);
+// 改主数据的门槛：admin 直通；staff 需 pz.content.edit 且是该题出题人（后端同样判定）
+const canEditMeta = computed(() => {
+    if (auth.isAdmin) return true;
+    if (!auth.can("pz.content.edit")) return false;
+    const authorId = Number(selectedRow.value?.authorId);
+    return Number.isFinite(authorId) && authorId === myAccountId.value;
+});
 
 const filteredPuzzles = computed(() => {
     const word = keyword.value.trim().toLowerCase();
@@ -85,9 +95,25 @@ async function loadPuzzles() {
             await selectPuzzle(puzzles.value[0].key);
         }
     } catch (error) {
-        ElMessage.error(error?.message || "题目列表加载失败");
+        ElMessage.error(
+            describeApiError(error, {
+                fallback: "题目列表加载失败",
+                forbidden: "没有出题权限，请联系 admin 授予 pz.content.edit",
+            }),
+        );
     } finally {
         puzzleLoading.value = false;
+    }
+}
+
+// 主数据保存后静默重取列表：authorUsername、answer 只有列表接口才给，
+// 不动当前选中的题，避免中间栏被重置
+async function refreshList() {
+    try {
+        const data = await listPuzzles();
+        if (Array.isArray(data?.items)) puzzles.value = data.items;
+    } catch {
+        // 静默失败：主数据已保存成功，列表稍后刷新即可
     }
 }
 
@@ -123,7 +149,12 @@ async function selectPuzzle(key) {
     } catch (error) {
         // 迟到的错误同样别弹，它已经和当前选中的题无关了
         if (isStale(seq, key)) return;
-        ElMessage.error(error?.message || "页面草稿加载失败");
+        ElMessage.error(
+            describeApiError(error, {
+                fallback: "页面草稿加载失败",
+                forbidden: "只能编辑自己名下的题目",
+            }),
+        );
     } finally {
         // 只有最新一次请求能收起 loading，否则会把新题的转圈关掉
         if (!isStale(seq, key)) detailLoading.value = false;
@@ -164,6 +195,9 @@ async function submitCreate() {
             title: puzzle.title ?? title,
             enabled: puzzle.enabled ?? createForm.value.enabled,
             rev: 0,
+            // 新建题的 author_id 由后端归到当前账号
+            authorId: puzzle.author_id ?? myAccountId.value,
+            authorUsername: auth.account?.username ?? null,
         });
         createOpen.value = false;
         keyword.value = "";
@@ -177,7 +211,12 @@ async function submitCreate() {
         detail.value = blankDetail(key, puzzle.title ?? title);
         ElMessage.success(`已创建 ${key}，接着写页面内容吧`);
     } catch (error) {
-        ElMessage.error(error?.message || "创建失败");
+        ElMessage.error(
+            describeApiError(error, {
+                fallback: "创建失败",
+                forbidden: "没有出题权限，请联系 admin 授予 pz.content.edit",
+            }),
+        );
     } finally {
         creating.value = false;
     }
@@ -232,12 +271,14 @@ function onMetaSaved(puzzle) {
         const ord = pick(puzzle, "ord");
         const tipsReward = pick(puzzle, "tipsReward", "tips_reward");
         const archiveId = pick(puzzle, "archiveId", "archive_id");
+        const authorId = pick(puzzle, "authorId", "author_id");
 
         if (title !== undefined) target.title = title;
         if (enabled !== undefined) target.enabled = enabled;
         if (ord !== undefined) target.ord = ord;
         if (tipsReward !== undefined) target.tipsReward = tipsReward;
         if (archiveId !== undefined) target.archiveId = archiveId;
+        if (authorId !== undefined) target.authorId = Number(authorId);
     }
 
     // 中间栏头部与 PageForm 都读 detail，一并跟上
@@ -247,6 +288,10 @@ function onMetaSaved(puzzle) {
         if (title !== undefined) detail.value.title = title;
         if (enabled !== undefined) detail.value.enabled = enabled;
     }
+
+    // authorUsername / answer 只有列表接口才给，且 answer 会随改派易主，
+    // 所以保存后静默重取一次列表
+    refreshList();
 }
 
 // 发布组件会让引用它的题目自动升级版本、page_rev +1；
@@ -315,6 +360,13 @@ async function onWidgetPublished({ name, referencesUpdated }) {
                             停用
                         </el-tag>
                     </span>
+                    <!-- 出题人隔离后，staff 只会看到自己的题；admin 用它区分归属 -->
+                    <span
+                        v-if="auth.isAdmin && item.authorUsername"
+                        class="puzzle-item__author"
+                    >
+                        {{ item.authorUsername }}
+                    </span>
                 </button>
             </el-scrollbar>
         </aside>
@@ -353,6 +405,7 @@ async function onWidgetPublished({ name, referencesUpdated }) {
                         <PuzzleMetaForm
                             :row="selectedRow"
                             :readonly="!canEditMeta"
+                            :can-assign-author="auth.isAdmin"
                             @saved="onMetaSaved"
                         />
                     </el-tab-pane>
@@ -498,6 +551,14 @@ async function onWidgetPublished({ name, referencesUpdated }) {
     gap: 6px;
     font-size: 11px;
     color: var(--el-text-color-secondary);
+}
+
+.puzzle-item__author {
+    font-size: 11px;
+    color: var(--el-text-color-placeholder);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .studio__editor-head {

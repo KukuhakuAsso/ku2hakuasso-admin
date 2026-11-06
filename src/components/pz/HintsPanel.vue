@@ -6,6 +6,7 @@
 import { ref, watch } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { getPuzzleHints, putPuzzleHints } from "@/api/pz";
+import { describeApiError } from "@/utils/apiError";
 
 const props = defineProps({
     puzzleKey: { type: String, required: true },
@@ -42,7 +43,12 @@ async function load() {
         hints.value = toModel(data?.hints);
         serverCount.value = hints.value.length;
     } catch (error) {
-        ElMessage.error(error?.message || "提示读取失败");
+        ElMessage.error(
+            describeApiError(error, {
+                fallback: "提示读取失败",
+                forbidden: "只能维护自己名下的题目",
+            }),
+        );
         hints.value = [];
         serverCount.value = 0;
     } finally {
@@ -146,7 +152,12 @@ async function save() {
         ElMessage.success(`已保存，rev ${rev.value}`);
         emit("saved", { key: props.puzzleKey, rev: rev.value });
     } catch (error) {
-        ElMessage.error(error?.message || "提示保存失败");
+        ElMessage.error(
+            describeApiError(error, {
+                fallback: "提示保存失败",
+                forbidden: "只能维护自己名下的题目",
+            }),
+        );
     } finally {
         saving.value = false;
     }

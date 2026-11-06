@@ -40,7 +40,7 @@
         <el-menu-item v-if="canViewPunishments" index="/punishments">
           <el-icon><Warning /></el-icon><span>处罚记录</span>
         </el-menu-item>
-        <el-sub-menu index="progress-group">
+        <el-sub-menu v-if="auth.isAdmin" index="progress-group">
           <template #title>
             <el-icon><DataLine /></el-icon><span>进度监测</span>
           </template>

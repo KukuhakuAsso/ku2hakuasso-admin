@@ -35,7 +35,7 @@
       </el-table-column>
     </el-table>
 
-    <PageNav :page="page" :has-more="hasMore" :loading="loading" @prev="prev" @next="next" />
+    <PageNav :page="page" :has-more="hasMore" :loading="loading" @prev="run(prev)" @next="run(next)" />
   </div>
 </template>
 
@@ -47,6 +47,7 @@ import { listSubmissions } from "@/api/progress";
 import { useCursorPage } from "@/composables/useCursorPage";
 import PageNav from "@/components/PageNav.vue";
 import { fmtTime, fmtDuration } from "@/utils/format";
+import { describeApiError } from "@/utils/apiError";
 
 const auth = useAuthStore();
 const filters = reactive({ team_id: "", account_id: "", puzzle_key: "", with_answer: false });
@@ -62,16 +63,27 @@ const fetcher = (cursor) =>
     });
 const { list, page, hasMore, loading, first, next, prev } = useCursorPage(fetcher);
 
+// useCursorPage 不吞异常：这里兜住，否则 403 只会变成一条无声的 unhandled rejection
+async function run(action) {
+    try {
+        await action();
+    } catch (err) {
+        ElMessage.error(
+            describeApiError(err, { forbidden: "提交历史仅 admin 可查看" }),
+        );
+    }
+}
+
 function search() {
-    first();
+    run(first);
 }
 function reset() {
     filters.team_id = "";
     filters.account_id = "";
     filters.puzzle_key = "";
     filters.with_answer = false;
-    first();
+    run(first);
 }
 
-onMounted(() => first());
+onMounted(() => run(first));
 </script>
