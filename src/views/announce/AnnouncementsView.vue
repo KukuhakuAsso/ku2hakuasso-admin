@@ -65,6 +65,7 @@ import { listAnnouncements, announce } from "@/api/msg";
 import { useCursorPage } from "@/composables/useCursorPage";
 import PageNav from "@/components/PageNav.vue";
 import { fmtTime } from "@/utils/format";
+import { extractErrorMessage } from "@/api/errors";
 
 const auth = useAuthStore();
 const subject = ref("");
@@ -89,7 +90,7 @@ async function publish() {
         content.value = "";
         first();
     } catch (err) {
-        ElMessage.error(err.message);
+        ElMessage.error(extractErrorMessage(err));
     } finally {
         publishing.value = false;
     }

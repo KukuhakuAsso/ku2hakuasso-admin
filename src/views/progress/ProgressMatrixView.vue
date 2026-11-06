@@ -138,7 +138,7 @@ import {
     TEAM_STATUS,
     statusMeta,
 } from "@/utils/format";
-import { describeApiError } from "@/utils/apiError";
+import { describeApiError } from "@/api/errors";
 import PageNav from "@/components/PageNav.vue";
 
 // 状态取值见 api-9-admin.md：matrix 缺省按「只看正常队伍（2）」处理，

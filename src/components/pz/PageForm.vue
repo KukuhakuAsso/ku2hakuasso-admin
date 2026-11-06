@@ -7,7 +7,7 @@ import { putPuzzlePage } from "@/api/pz";
 import { useAuthStore } from "@/stores/auth";
 import { ATTACHMENT_TYPES } from "@/config/pz";
 import { renderMarkdown } from "@/utils/miniMarkdown";
-import { describeApiError } from "@/utils/apiError";
+import { describeApiError } from "@/api/errors";
 import SourceEditor from "@/components/pz/SourceEditor.vue";
 import UnlockForm from "@/components/pz/UnlockForm.vue";
 import PageMergeDialog from "@/components/pz/PageMergeDialog.vue";
@@ -506,7 +506,7 @@ async function save() {
     try {
         payload = toPayload();
     } catch (error) {
-        ElMessage.error(error?.message || "参数格式有误");
+        ElMessage.error(extractErrorMessage(error, "参数格式有误"));
         return;
     }
 

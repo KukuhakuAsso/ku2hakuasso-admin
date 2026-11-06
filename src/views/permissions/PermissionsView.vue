@@ -169,6 +169,7 @@ import {
     listPermissions,
     revokePermissionGroup,
 } from "@/api/msg";
+import { extractErrorMessage } from "@/api/errors";
 
 const route = useRoute();
 
@@ -225,7 +226,7 @@ async function loadCatalog() {
             groups: data?.groups || [],
         };
     } catch (err) {
-        ElMessage.error(err.message);
+        ElMessage.error(extractErrorMessage(err));
     } finally {
         loading.value = false;
     }
@@ -250,7 +251,7 @@ async function loadStaffAccounts() {
         }
         accountOptions.value = items;
     } catch (err) {
-        ElMessage.error(err.message);
+        ElMessage.error(extractErrorMessage(err));
     } finally {
         staffLoading.value = false;
     }
@@ -289,7 +290,7 @@ async function loadAccount() {
         // 被替换的请求失败不打扰操作员
         if (seq !== accountSeq || requestedId !== accountId.value) return;
         account.value = null;
-        ElMessage.error(err.message);
+        ElMessage.error(extractErrorMessage(err));
     } finally {
         if (seq === accountSeq) accountLoading.value = false;
     }
@@ -345,7 +346,7 @@ async function toggleGroup(row) {
         // 期间切了账号就不再打扰当前账号的视图
         if (targetId === accountId.value) await loadAccount();
     } catch (err) {
-        if (targetId === accountId.value) ElMessage.error(err.message);
+        if (targetId === accountId.value) ElMessage.error(extractErrorMessage(err));
     } finally {
         busyGroup.value = "";
     }

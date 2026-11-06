@@ -216,6 +216,7 @@ import { unbanTeam } from "@/api/teams";
 import { useCursorPage } from "@/composables/useCursorPage";
 import PageNav from "@/components/PageNav.vue";
 import { fmtTime } from "@/utils/format";
+import { extractErrorMessage } from "@/api/errors";
 
 const auth = useAuthStore();
 
@@ -325,7 +326,7 @@ async function submitReply() {
             first();
             return;
         }
-        ElMessage.error(err.message || "回复失败");
+        ElMessage.error(extractErrorMessage(err, "回复失败"));
     } finally {
         replyDialog.loading = false;
     }
@@ -354,7 +355,7 @@ async function unmuteRow(row) {
             first();
             return;
         }
-        ElMessage.error(err.message || "解除禁言失败");
+        ElMessage.error(extractErrorMessage(err, "解除禁言失败"));
     }
 }
 
@@ -375,7 +376,7 @@ async function unbanRow(row) {
         ElMessage.success("已解封（被封禁覆盖的原禁言不会恢复）");
         first();
     } catch (err) {
-        ElMessage.error(err.message || "解封失败");
+        ElMessage.error(extractErrorMessage(err, "解封失败"));
     }
 }
 

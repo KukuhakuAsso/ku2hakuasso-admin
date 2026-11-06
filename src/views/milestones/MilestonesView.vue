@@ -48,6 +48,7 @@ import { onMounted, reactive, ref } from "vue";
 import { ElMessage } from "element-plus";
 import { useAuthStore } from "@/stores/auth";
 import { listMilestones, createMilestone } from "@/api/milestones";
+import { extractErrorMessage } from "@/api/errors";
 
 const auth = useAuthStore();
 const loading = ref(false);
@@ -60,7 +61,7 @@ async function load() {
         if (Array.isArray(data)) milestones.value = data;
         else milestones.value = data?.items || data?.milestones || [];
     } catch (err) {
-        ElMessage.error(err.message);
+        ElMessage.error(extractErrorMessage(err));
     } finally {
         loading.value = false;
     }
@@ -94,7 +95,7 @@ async function submitCreate() {
         createDialog.visible = false;
         load();
     } catch (err) {
-        ElMessage.error(err.message);
+        ElMessage.error(extractErrorMessage(err));
     } finally {
         createDialog.loading = false;
     }

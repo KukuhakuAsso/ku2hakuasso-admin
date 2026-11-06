@@ -8,7 +8,7 @@
 import { computed, ref, watch } from "vue";
 import { ElMessage } from "element-plus";
 import { listMedia, signMedia, confirmMedia, uploadToSignedUrl } from "@/api/pz";
-import { describeApiError } from "@/utils/apiError";
+import { describeApiError } from "@/api/errors";
 import { MEDIA_KINDS, validateMediaFile } from "@/config/pz";
 
 const props = defineProps({

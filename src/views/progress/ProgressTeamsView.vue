@@ -56,7 +56,7 @@ import { listProgressTeams } from "@/api/progress";
 import { useCursorPage } from "@/composables/useCursorPage";
 import PageNav from "@/components/PageNav.vue";
 import { fmtTime, TEAM_STATUS, statusMeta } from "@/utils/format";
-import { describeApiError } from "@/utils/apiError";
+import { describeApiError } from "@/api/errors";
 
 const router = useRouter();
 const filters = reactive({ status: "" });

@@ -80,7 +80,7 @@ import { useRoute } from "vue-router";
 import { ElMessage } from "element-plus";
 import { getProgressTeam } from "@/api/progress";
 import { fmtTime, fmtDuration, TEAM_STATUS, statusMeta } from "@/utils/format";
-import { describeApiError } from "@/utils/apiError";
+import { describeApiError } from "@/api/errors";
 
 const route = useRoute();
 const loading = ref(false);

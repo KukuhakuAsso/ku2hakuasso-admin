@@ -9,7 +9,7 @@ import { ElMessage, ElMessageBox } from "element-plus";
 import { deleteFolder, listFolders, upsertFolder } from "@/api/pz";
 import { listAuthorCandidates } from "@/api/accounts";
 import { useAuthStore } from "@/stores/auth";
-import { describeApiError } from "@/utils/apiError";
+import { describeApiError } from "@/api/errors";
 import UnlockForm from "@/components/pz/UnlockForm.vue";
 
 const emit = defineEmits(["changed"]);

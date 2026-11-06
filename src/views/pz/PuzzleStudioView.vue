@@ -9,7 +9,7 @@ import { computed, ref } from "vue";
 import { ElMessage } from "element-plus";
 import { getPuzzlePage, listFolders, listPuzzles, listWidgets, putPuzzle } from "@/api/pz";
 import { pick } from "@/utils/format";
-import { describeApiError } from "@/utils/apiError";
+import { describeApiError } from "@/api/errors";
 import { useAuthStore } from "@/stores/auth";
 import PageForm from "@/components/pz/PageForm.vue";
 import PuzzleMetaForm from "@/components/pz/PuzzleMetaForm.vue";
@@ -255,7 +255,7 @@ async function onSaved(data) {
         detail.value = fresh;
     } catch (error) {
         if (isStale(seq, key)) return;
-        ElMessage.error(error?.message || "刷新页面状态失败");
+        ElMessage.error(extractErrorMessage(error, "刷新页面状态失败"));
     }
 }
 
@@ -309,7 +309,7 @@ async function onWidgetPublished({ name, referencesUpdated }) {
         detail.value = fresh;
     } catch (error) {
         if (isStale(seq, key)) return;
-        ElMessage.error(error?.message || "刷新页面状态失败");
+        ElMessage.error(extractErrorMessage(error, "刷新页面状态失败"));
     }
 }
 </script>

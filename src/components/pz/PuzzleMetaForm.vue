@@ -10,7 +10,7 @@ import { ElMessage } from "element-plus";
 import { putPuzzle } from "@/api/pz";
 import { listAuthorCandidates } from "@/api/accounts";
 import { pick } from "@/utils/format";
-import { describeApiError } from "@/utils/apiError";
+import { describeApiError } from "@/api/errors";
 
 const props = defineProps({
     // GET /admin/puzzles 的列表项

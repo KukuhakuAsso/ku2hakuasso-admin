@@ -146,6 +146,7 @@ import {
 import { unbanPlayer } from "@/api/players";
 import { unbanTeam } from "@/api/teams";
 import { fmtTime } from "@/utils/format";
+import { extractErrorMessage } from "@/api/errors";
 
 // 处罚记录：GET /admin/mutes（staff + moderation.mute）与 GET /admin/banneds（admin）。
 // 两个接口都不分页（limit ≤ 200），行里没有记录 id —— 解禁 / 解封都用 targetType + 目标 id。
@@ -196,7 +197,7 @@ async function load(state, request) {
     } catch (err) {
         state.rows = [];
         state.hasMore = false;
-        ElMessage.error(err.message || "读取处罚列表失败");
+        ElMessage.error(extractErrorMessage(err, "读取处罚列表失败"));
     } finally {
         state.loading = false;
     }
@@ -269,7 +270,7 @@ async function onAction(row) {
             reload();
             return;
         }
-        ElMessage.error(err.message || "操作失败");
+        ElMessage.error(extractErrorMessage(err, "操作失败"));
     }
 }
 

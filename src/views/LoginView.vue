@@ -96,6 +96,7 @@ import { ApiError } from "@/api/http";
 import { apiRegistrationConfig } from "@/api/auth";
 import RegisterSteps from "@/views/auth/RegisterSteps.vue";
 import ResetPasswordPanel from "@/views/auth/ResetPasswordPanel.vue";
+import { extractErrorMessage } from "@/api/errors";
 
 const router = useRouter();
 const route = useRoute();
@@ -163,7 +164,7 @@ async function onSubmit() {
         router.replace("/dashboard");
     } catch (err) {
         if (err instanceof ApiError) {
-            ElMessage.error(err.message);
+            ElMessage.error(extractErrorMessage(err));
         } else {
             ElMessage.error("登录失败，请稍后重试");
         }

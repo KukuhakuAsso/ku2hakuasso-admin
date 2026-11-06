@@ -52,6 +52,7 @@
 import { computed, reactive, ref, watch } from "vue";
 import { ElMessage } from "element-plus";
 import { muteAccount, muteTeam } from "@/api/moderation";
+import { extractErrorMessage, extractFieldMessage } from "@/api/errors";
 
 // 禁言对话框：账号级（players/:id/mute）或队伍级（teams/:id/mute）。
 // reason 必填 1–200；until 省略 = 永久，必须是未来时间（否则后端 400）。
@@ -126,8 +127,10 @@ async function submit() {
         emit("update:modelValue", false);
         emit("done", data);
     } catch (err) {
-        const message = err?.message || "禁言失败";
-        const fields = err?.detail?.detail?.fields || {};
+        const message = extractErrorMessage(err, "禁言失败");
+        // 字段级原因统一走 errors.js，别再手挖 err.detail.detail.fields
+        const reason = extractFieldMessage(err, "reason");
+        const until = extractFieldMessage(err, "until");
         if (err?.status === 409) {
             ElMessage.error(
                 message.includes("封禁")
@@ -136,10 +139,10 @@ async function submit() {
             );
         } else if (err?.status === 404) {
             ElMessage.error("目标不存在（账号已注销或队伍已解散）");
-        } else if (fields.reason || fields.until) {
-            reasonError.value = fields.reason || "";
-            untilError.value = fields.until || "";
-            ElMessage.error(fields.reason || fields.until);
+        } else if (reason || until) {
+            reasonError.value = reason;
+            untilError.value = until;
+            ElMessage.error(reason || until);
         } else {
             ElMessage.error(message);
         }

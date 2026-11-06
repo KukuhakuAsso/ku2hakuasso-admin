@@ -6,7 +6,7 @@
 import { ref, watch } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { getPuzzleHints, putPuzzleHints } from "@/api/pz";
-import { describeApiError } from "@/utils/apiError";
+import { describeApiError } from "@/api/errors";
 
 const props = defineProps({
     puzzleKey: { type: String, required: true },
