@@ -229,12 +229,14 @@ import {
 import { unbanPlayer } from "@/api/players";
 import { unbanTeam } from "@/api/teams";
 import { useCursorPage } from "@/composables/useCursorPage";
+import { useWorkbenchBadges } from "@/composables/useWorkbenchBadges";
 import PageNav from "@/components/PageNav.vue";
 import AttachmentGallery from "@/components/AttachmentGallery.vue";
 import { fmtTime } from "@/utils/format";
 import { extractErrorMessage } from "@/api/errors";
 
 const auth = useAuthStore();
+const { refreshAppeals } = useWorkbenchBadges();
 
 // 行同时覆盖账号级与队伍级：targetType + accountId / teamId 才是解禁、解封的依据。
 // 可见范围：禁言申诉需 moderation.mute；封禁申诉仅 admin。
@@ -334,11 +336,14 @@ async function submitReply() {
         });
         ElMessage.success("已回复，该主体可以继续申诉");
         replyDialog.visible = false;
+        // 回复后该主体退出「等官方反馈」，「申诉工作台」角标要立刻减一
+        void refreshAppeals();
         first();
     } catch (err) {
         if (err?.status === 404) {
             ElMessage.error("该主体没有可回复的申诉（可能已被处理）");
             replyDialog.visible = false;
+            void refreshAppeals();
             first();
             return;
         }
@@ -364,10 +369,13 @@ async function unmuteRow(row) {
         const id = targetIdOf(row);
         await (row.targetType === "team" ? unmuteTeam(id) : unmuteAccount(id));
         ElMessage.success("已解除禁言");
+        // 处罚已撤销 → 该主体不会再作为「等官方反馈」出现在申诉工作台
+        void refreshAppeals();
         first();
     } catch (err) {
         if (err?.status === 404) {
             ElMessage.info("该主体当前未被禁言（可能已到期自动解除）");
+            void refreshAppeals();
             first();
             return;
         }
@@ -390,6 +398,7 @@ async function unbanRow(row) {
         const id = targetIdOf(row);
         await (row.targetType === "team" ? unbanTeam(id) : unbanPlayer(id));
         ElMessage.success("已解封（被封禁覆盖的原禁言不会恢复）");
+        void refreshAppeals();
         first();
     } catch (err) {
         ElMessage.error(extractErrorMessage(err, "解封失败"));

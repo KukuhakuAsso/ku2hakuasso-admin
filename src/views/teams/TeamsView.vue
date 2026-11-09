@@ -159,12 +159,15 @@ import {
 } from "@/api/teams";
 import { useCursorPage } from "@/composables/useCursorPage";
 import { useMuteActions } from "@/composables/useMuteActions";
+import { useWorkbenchBadges } from "@/composables/useWorkbenchBadges";
 import PageNav from "@/components/PageNav.vue";
 import MuteDialog from "@/components/MuteDialog.vue";
 import { fmtTime, TEAM_STATUS, TEAM_STATUS_OPTIONS, statusMeta } from "@/utils/format";
 import { extractErrorMessage } from "@/api/errors";
 
 const auth = useAuthStore();
+// 解封 = 处罚撤销：队伍会退出申诉工作台的「等官方反馈」列表，角标要立刻减
+const { refreshAppeals } = useWorkbenchBadges();
 const filters = reactive({ status: 0 });
 
 const fetcher = (cursor) => listTeams({ ...filters, cursor, limit: 50 });
@@ -264,6 +267,7 @@ async function unbanRow(row) {
     try {
         await unbanTeam(row.id);
         ElMessage.success("已解封（被封禁覆盖的原禁言不会恢复）");
+        void refreshAppeals();
         first();
         refreshMutes();
     } catch (err) {

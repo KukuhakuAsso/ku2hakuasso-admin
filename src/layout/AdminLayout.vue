@@ -22,20 +22,36 @@
         <el-menu-item index="/teams">
           <el-icon><OfficeBuilding /></el-icon><span>队伍管理</span>
         </el-menu-item>
-        <el-menu-item v-if="canMsgWorkbench" index="/messages">
-          <el-icon><ChatDotRound /></el-icon><span>站内信工作台</span>
-        </el-menu-item>
+        <!-- 用户信工作台：站内信 / 提示 / 申诉三个原工作台合并为子项。
+             整组按「至少能看一个子项」显示，子项各自按权限收口。 -->
+        <el-sub-menu v-if="canUserLetters" index="letters-group">
+          <template #title>
+            <el-icon><Message /></el-icon><span>用户信工作台</span>
+            <span v-if="badges.totalBadge" class="menu-badge">
+              {{ badges.totalBadge }}
+            </span>
+          </template>
+          <el-menu-item v-if="canMsgWorkbench" index="/letters/messages">
+            站内信工作台
+            <span v-if="badges.mailsBadge" class="menu-badge">
+              {{ badges.mailsBadge }}
+            </span>
+          </el-menu-item>
+          <el-menu-item v-if="auth.can('msg.hint.handle')" index="/letters/hints">
+            提示工作台
+            <span v-if="badges.hintsBadge" class="menu-badge">
+              {{ badges.hintsBadge }}
+            </span>
+          </el-menu-item>
+          <el-menu-item v-if="canHandleAppeals" index="/letters/appeals">
+            申诉工作台
+            <span v-if="badges.appealsBadge" class="menu-badge">
+              {{ badges.appealsBadge }}
+            </span>
+          </el-menu-item>
+        </el-sub-menu>
         <el-menu-item v-if="canNotify" index="/notify">
-          <el-icon><Promotion /></el-icon><span>定向通知</span>
-        </el-menu-item>
-        <el-menu-item v-if="auth.can('msg.hint.handle')" index="/hints">
-          <el-icon><QuestionFilled /></el-icon><span>提示工作台</span>
-        </el-menu-item>
-        <el-menu-item v-if="auth.can('msg.announce.publish')" index="/announcements">
-          <el-icon><Bell /></el-icon><span>公告</span>
-        </el-menu-item>
-        <el-menu-item v-if="canHandleAppeals" index="/appeals">
-          <el-icon><ChatLineSquare /></el-icon><span>申诉工作台</span>
+          <el-icon><Promotion /></el-icon><span>定向通知与公告</span>
         </el-menu-item>
         <el-menu-item v-if="canViewPunishments" index="/punishments">
           <el-icon><Warning /></el-icon><span>处罚记录</span>
@@ -59,9 +75,6 @@
         </el-menu-item>
         <el-menu-item index="/milestones">
           <el-icon><Flag /></el-icon><span>里程碑</span>
-        </el-menu-item>
-        <el-menu-item v-if="auth.isAdmin" index="/maintenance">
-          <el-icon><Tools /></el-icon><span>维护操作</span>
         </el-menu-item>
         <el-menu-item v-if="auth.isAdmin" index="/permissions">
           <el-icon><Lock /></el-icon><span>权限管理</span>
@@ -88,10 +101,11 @@
 </template>
 
 <script setup>
-import { computed } from "vue";
+import { computed, onBeforeUnmount, onMounted, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { ElMessage } from "element-plus";
 import { useAuthStore } from "@/stores/auth";
+import { useWorkbenchBadges } from "@/composables/useWorkbenchBadges";
 
 const route = useRoute();
 const router = useRouter();
@@ -103,8 +117,14 @@ const currentTitle = computed(() => route.meta.title || document.title);
 const canMsgWorkbench = computed(
     () => auth.can("msg.feedback.handle") || auth.can("msg.announce.publish"),
 );
-// 定向通知（POST /admin/msg/notify）：需 msg.notify.send；内部公告仅 admin（页内收口）
-const canNotify = computed(() => auth.isAdmin || auth.can("msg.notify.send"));
+// 定向通知与公告：定向通知需 msg.notify.send、官方公告与公告历史需 msg.announce.publish、
+// 内部公告仅 admin —— 任一项可见就显示入口（页内再按页签逐个收口）
+const canNotify = computed(
+    () =>
+        auth.isAdmin ||
+        auth.can("msg.notify.send") ||
+        auth.can("msg.announce.publish"),
+);
 // 申诉工作台：admin 看全部，staff 需 moderation.mute（只有禁言申诉）
 const canHandleAppeals = computed(
     () => auth.isAdmin || auth.can("moderation.mute"),
@@ -113,9 +133,43 @@ const canHandleAppeals = computed(
 const canViewPunishments = computed(
     () => auth.isAdmin || auth.can("moderation.mute"),
 );
+// 用户信工作台：三个子项任一可见就显示这组，避免空组占位
+const canUserLetters = computed(
+    () => canMsgWorkbench.value || auth.can("msg.hint.handle") || canHandleAppeals.value,
+);
+
+// ---------- 用户信工作台角标 ----------
+const { badges, refresh: refreshBadges, startPolling, stopPolling, reset: resetBadges } =
+    useWorkbenchBadges();
+
+// 每一路都按权限决定是否请求：没权限的项不仅不显示角标，也不该发请求（会 403）
+const badgeAccess = computed(() => ({
+    mails: canMsgWorkbench.value,
+    hints: auth.can("msg.hint.handle"),
+    appeals: canHandleAppeals.value,
+}));
+
+onMounted(() => {
+    // startPolling 内部会立刻拉一次，并负责 60 秒轮询 + 可见性恢复时补拉
+    startPolling(() => badgeAccess.value);
+});
+
+onBeforeUnmount(() => {
+    stopPolling();
+});
+
+// 切页面就刷新一次：从工作台处理完返回时，角标立刻反映最新状态
+watch(
+    () => route.path,
+    () => refreshBadges(badgeAccess.value),
+);
+
+// 权限快照变化（登录后 syncAccount / 授权被回收）：重算一遍，被收回的那一路清零
+watch(badgeAccess, (access) => refreshBadges(access), { deep: true });
 
 async function onLogout() {
     await auth.logout();
+    resetBadges();
     ElMessage.success("已退出登录");
     router.replace("/login");
 }
@@ -161,6 +215,21 @@ async function onLogout() {
 .header-title {
     font-size: 16px;
     font-weight: 600;
+}
+/* 侧栏角标：深色底上用强对比红，数字等宽避免位数变化时抖动 */
+.menu-badge {
+    margin-left: auto;
+    min-width: 18px;
+    padding: 0 5px;
+    border-radius: 9px;
+    background: #e45656;
+    color: #fff;
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 18px;
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+    flex: none;
 }
 .header-user {
     display: flex;

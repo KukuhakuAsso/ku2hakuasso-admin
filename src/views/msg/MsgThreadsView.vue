@@ -174,6 +174,7 @@ import { useRoute } from "vue-router";
 import { useAuthStore } from "@/stores/auth";
 import { listMails, getMail, replyMail, markMailRead } from "@/api/msg";
 import { useCursorPage } from "@/composables/useCursorPage";
+import { useWorkbenchBadges } from "@/composables/useWorkbenchBadges";
 import PageNav from "@/components/PageNav.vue";
 import AttachmentGallery from "@/components/AttachmentGallery.vue";
 import {
@@ -188,6 +189,7 @@ const POLL_INTERVAL_MS = 10000;
 let pollTimer = null;
 
 const auth = useAuthStore();
+const { refreshMails } = useWorkbenchBadges();
 
 const route = useRoute();
 const channel = ref(
@@ -315,6 +317,8 @@ async function markActiveRead(mailId) {
         item.unread = 0;
       }
     }
+    // 侧栏「站内信工作台」角标数的是未读邮件，读掉一封就立刻重拉
+    void refreshMails();
   } catch {
     // 标记失败不打扰操作员：正文已经打开了，下次刷新会重新对齐未读状态
   }
