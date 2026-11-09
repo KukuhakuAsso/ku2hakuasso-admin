@@ -1,22 +1,24 @@
 <template>
     <div class="page-card">
-        <el-alert
-            type="info"
-            :closable="false"
-            show-icon
-            class="tip-alert"
-            title="定向通知：向指定账号 / 队伍各发一封站内信（来源 notice，玩家侧显示真实操作者用户名）。"
-        >
-            <template #default>
-                每位收件人各得一封根邮件，全部成功才会写入（失败一封都不发）；
-                去重后收件人合计不得超过 50 个；账号默认允许回复，<strong>队伍收件人恒为仅通知</strong>。
-            </template>
-        </el-alert>
-
+        <!-- 四个页签合并在同一页：定向通知 / 官方公告 / 公告历史 / 内部公告。
+             每个页签各自按权限显示，说明文案也各自跟着页签走（不再顶部固定一条）。 -->
         <el-tabs v-model="activeTab" class="tabs">
-            <!-- ---------- 定向通知 ---------- -->
-            <el-tab-pane label="定向通知" name="notify">
-                <el-form label-width="110px" class="notify-form">
+            <!-- ---------- 定向通知（需 msg.notify.send） ---------- -->
+            <el-tab-pane v-if="canNotify" label="定向通知" name="notify">
+                <el-alert
+                    type="info"
+                    :closable="false"
+                    show-icon
+                    class="tip-alert"
+                    title="定向通知：向指定账号 / 队伍各发一封站内信（来源 notice，玩家侧显示真实操作者用户名）。"
+                >
+                    <template #default>
+                        每位收件人各得一封根邮件，全部成功才会写入（失败一封都不发）；
+                        去重后收件人合计不得超过 50 个；账号默认允许回复，<strong>队伍收件人恒为仅通知</strong>。
+                    </template>
+                </el-alert>
+
+                <el-form label-width="110px" class="form-block">
                     <el-form-item label="收件账号">
                         <el-select
                             v-model="accountIds"
@@ -131,6 +133,105 @@
                 </el-card>
             </el-tab-pane>
 
+            <!-- ---------- 官方公告（需 msg.announce.publish） ---------- -->
+            <el-tab-pane v-if="canAnnounce" label="官方公告" name="announce">
+                <el-alert
+                    type="warning"
+                    :closable="false"
+                    show-icon
+                    class="tip-alert"
+                    title="官方公告：写入全局系统频道，所有玩家可见，发布后不可撤回。"
+                >
+                    <template #default>
+                        玩家侧在「官方公告」频道收到这封只读广播（<code>canReply=false</code>）。
+                        与玩家看到的会话视图对照请用
+                        <el-button link type="primary" @click="openAnnounceChannel">
+                            站内信工作台 · 系统公告频道
+                        </el-button>
+                        ；发布记录在「公告历史」页签。
+                    </template>
+                </el-alert>
+
+                <el-form label-width="110px" class="form-block">
+                    <el-form-item label="主题">
+                        <el-input
+                            v-model="announceForm.subject"
+                            maxlength="80"
+                            show-word-limit
+                            placeholder="公告主题（1–80 字，必填）"
+                        />
+                    </el-form-item>
+                    <el-form-item label="正文">
+                        <el-input
+                            v-model="announceForm.content"
+                            type="textarea"
+                            :rows="6"
+                            maxlength="2000"
+                            show-word-limit
+                            placeholder="公告正文（1–2000 字，必填）"
+                        />
+                    </el-form-item>
+                    <el-form-item>
+                        <el-button
+                            type="primary"
+                            :loading="announcing"
+                            :disabled="!canPublishAnnounce"
+                            @click="publishAnnounce"
+                        >
+                            发布公告
+                        </el-button>
+                        <span class="warn">⚠ 无撤回接口，请确认后再发布</span>
+                    </el-form-item>
+                </el-form>
+
+                <el-card v-if="announceResult" shadow="never" class="result">
+                    <template #header>发布成功</template>
+                    <p class="result-line">
+                        会话 threadId：{{ announceResult.threadId }} · 消息 msgId：{{
+                            announceResult.msgId
+                        }}
+                        · 时间：{{ fmtTime(announceResult.createdAt) }}
+                        · 附件 {{ announceResult.attachments?.length || 0 }} 张
+                    </p>
+                </el-card>
+            </el-tab-pane>
+
+            <!-- ---------- 公告历史（倒序，独立页签） ---------- -->
+            <el-tab-pane v-if="canAnnounce" label="公告历史" name="history">
+                <el-alert
+                    type="info"
+                    :closable="false"
+                    show-icon
+                    class="tip-alert"
+                    title="历史公告（倒序）：与玩家侧「官方公告」频道同源，含正文与附件数量。"
+                />
+
+                <el-table v-loading="loading" :data="list" border stripe>
+                    <el-table-column prop="id" label="ID" width="90" />
+                    <el-table-column prop="subject" label="主题" min-width="200" />
+                    <el-table-column label="内容" min-width="360">
+                        <template #default="{ row }">{{ row.content }}</template>
+                    </el-table-column>
+                    <el-table-column prop="contentType" label="类型" width="100" />
+                    <el-table-column label="附件" width="90">
+                        <template #default="{ row }">
+                            {{ row.attachments?.length || "—" }}
+                        </template>
+                    </el-table-column>
+                    <el-table-column label="发布时间" width="180">
+                        <template #default="{ row }">{{ fmtTime(row.createdAt) }}</template>
+                    </el-table-column>
+                </el-table>
+
+                <PageNav
+                    :page="page"
+                    :has-more="hasMore"
+                    :loading="loading"
+                    @prev="prev"
+                    @next="next"
+                />
+            </el-tab-pane>
+
             <!-- ---------- 内部公告（仅 admin） ---------- -->
             <el-tab-pane v-if="auth.isAdmin" label="内部公告" name="internal">
                 <el-alert
@@ -150,7 +251,7 @@
                     </template>
                 </el-alert>
 
-                <el-form label-width="110px" class="notify-form">
+                <el-form label-width="110px" class="form-block">
                     <el-form-item label="主题">
                         <el-input
                             v-model="internalForm.subject"
@@ -197,23 +298,83 @@
 </template>
 
 <script setup>
-import { computed, onMounted, reactive, ref } from "vue";
-import { useRouter } from "vue-router";
+import { computed, onMounted, reactive, ref, watch } from "vue";
+import { useRoute, useRouter } from "vue-router";
 import { ElMessage } from "element-plus";
 import { useAuthStore } from "@/stores/auth";
 import { listPlayers } from "@/api/players";
 import { listTeams } from "@/api/teams";
-import { notifyTargets, publishInternalAnnounce } from "@/api/msg";
+import {
+    announce,
+    listAnnouncements,
+    notifyTargets,
+    publishInternalAnnounce,
+} from "@/api/msg";
+import { useCursorPage } from "@/composables/useCursorPage";
+import PageNav from "@/components/PageNav.vue";
 import { fmtTime, TEAM_STATUS, statusMeta } from "@/utils/format";
 import { extractErrorMessage } from "@/api/errors";
 
 const auth = useAuthStore();
 const router = useRouter();
+const route = useRoute();
 
 // 服务端上限：合并去重后收件人合计 ≤ 50（超出 400 E_VALIDATION）
 const MAX_RECIPIENTS = 50;
 
-const activeTab = ref("notify");
+// ---- 页签（四个功能合并成一页） ----
+// 定向通知 → msg.notify.send；官方公告 / 公告历史 → msg.announce.publish；
+// 内部公告 → 仅 admin（后端不挂权限码，只校验角色）。admin 由 can() 直通。
+const canNotify = computed(() => auth.can("msg.notify.send"));
+const canAnnounce = computed(() => auth.can("msg.announce.publish"));
+
+const TAB_NAMES = ["notify", "announce", "history", "internal"];
+const tabVisible = computed(() => ({
+    notify: canNotify.value,
+    announce: canAnnounce.value,
+    history: canAnnounce.value,
+    internal: auth.isAdmin,
+}));
+
+function firstVisibleTab() {
+    return TAB_NAMES.find((name) => tabVisible.value[name]) || "notify";
+}
+
+// 支持深链（旧 /announcements 会重定向到 ?tab=announce）；指定的页签不可见时回落到第一个可见的
+const requested = String(route.query.tab || "");
+const activeTab = ref(
+    TAB_NAMES.includes(requested) && tabVisible.value[requested]
+        ? requested
+        : firstVisibleTab(),
+);
+
+// 权限被回收后当前页签可能已经不该显示：换到第一个可见页签，避免停在空白页
+watch(
+    tabVisible,
+    (visible) => {
+        if (!visible[activeTab.value]) activeTab.value = firstVisibleTab();
+    },
+    { deep: true },
+);
+
+// 同一组件内跳转（如旧 /announcements 重定向到 ?tab=announce）不会重建实例，
+// setup 只跑一次，所以 query 变化要单独接住
+watch(
+    () => route.query.tab,
+    (tab) => {
+        const name = String(tab || "");
+        if (TAB_NAMES.includes(name) && tabVisible.value[name]) {
+            activeTab.value = name;
+        }
+    },
+);
+
+// 反向同步：手动切页签时把 tab 写回地址栏（replace，不留历史），
+// 刷新 / 复制链接都能回到同一页签
+watch(activeTab, (tab) => {
+    if (String(route.query.tab || "") === tab) return;
+    router.replace({ path: route.path, query: { ...route.query, tab } });
+});
 
 const accountIds = ref([]);
 const teamIds = ref([]);
@@ -399,6 +560,81 @@ function resetNotify() {
     notifyResult.value = null;
 }
 
+// ---- 官方公告（需 msg.announce.publish） ----
+const announceForm = reactive({ subject: "", content: "" });
+const announcing = ref(false);
+const announceResult = ref(null);
+
+const canPublishAnnounce = computed(() => {
+    const subject = announceForm.subject.trim();
+    const content = announceForm.content.trim();
+    return (
+        canAnnounce.value &&
+        subject.length >= 1 &&
+        subject.length <= 80 &&
+        content.length >= 1 &&
+        content.length <= 2000
+    );
+});
+
+async function publishAnnounce() {
+    if (!canPublishAnnounce.value) {
+        ElMessage.warning("请填写主题与正文（各 1–80 / 1–2000 字）");
+        return;
+    }
+    announcing.value = true;
+    announceResult.value = null;
+    try {
+        const data = await announce({
+            subject: announceForm.subject.trim(),
+            content: announceForm.content.trim(),
+        });
+        announceResult.value = data || {};
+        ElMessage.success("公告已发布");
+        announceForm.subject = "";
+        announceForm.content = "";
+        // 新公告排在倒序列表最前面：已经打开过「公告历史」就顺手刷新
+        if (historyLoaded.value) first();
+    } catch (err) {
+        if (err?.status === 403) {
+            ElMessage.error("发布公告需要 msg.announce.publish 权限");
+        } else {
+            ElMessage.error(extractErrorMessage(err, "发布失败"));
+        }
+    } finally {
+        announcing.value = false;
+    }
+}
+
+function openAnnounceChannel() {
+    router.push({ path: "/letters/messages", query: { channel: "system" } });
+}
+
+// ---- 公告历史（倒序游标分页，首次切到该页签才请求） ----
+const historyFetcher = (cursor) => listAnnouncements({ cursor, limit: 50 });
+const {
+    list,
+    page,
+    hasMore,
+    loading,
+    first,
+    next,
+    prev,
+} = useCursorPage(historyFetcher);
+
+const historyLoaded = ref(false);
+watch(
+    activeTab,
+    (tab) => {
+        if (tab !== "history" || historyLoaded.value) return;
+        historyLoaded.value = true;
+        first().catch((err) =>
+            ElMessage.error(extractErrorMessage(err, "读取公告历史失败")),
+        );
+    },
+    { immediate: true },
+);
+
 // ---- 内部公告（仅 admin） ----
 const internalForm = reactive({ subject: "", content: "" });
 const publishing = ref(false);
@@ -444,11 +680,12 @@ async function publishInternal() {
 }
 
 function openInternalHistory() {
-    router.push({ path: "/messages", query: { channel: "internal" } });
+    router.push({ path: "/letters/messages", query: { channel: "internal" } });
 }
 
 onMounted(() => {
-    loadTeams();
+    // 队伍收件人只服务「定向通知」页签：没有该权限就不必翻完全部队伍
+    if (canNotify.value) loadTeams();
 });
 </script>
 
@@ -459,7 +696,7 @@ onMounted(() => {
 .tabs {
     margin-top: 4px;
 }
-.notify-form {
+.form-block {
     max-width: 860px;
     padding-top: 8px;
 }

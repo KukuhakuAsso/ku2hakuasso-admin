@@ -188,14 +188,18 @@ defineExpose({ reload: load, folders });
                     </el-tag>
                 </template>
             </el-table-column>
-            <el-table-column label="操作" width="120" fixed="right">
+            <el-table-column label="操作" width="130" fixed="right">
                 <template #default="{ row }">
-                    <el-button size="small" text type="primary" @click="openEdit(row)">
-                        编辑
-                    </el-button>
-                    <el-button size="small" text type="danger" @click="remove(row)">
-                        删除
-                    </el-button>
+                    <!-- 用 flex + gap 排一行：默认的 el-button + el-button 会带 12px 左边距，
+                         再叠上两个按钮自身的 padding 就会超出 120px 被挤成两行 -->
+                    <div class="row-actions">
+                        <el-button size="small" text type="primary" @click="openEdit(row)">
+                            编辑
+                        </el-button>
+                        <el-button size="small" text type="danger" @click="remove(row)">
+                            删除
+                        </el-button>
+                    </div>
                 </template>
             </el-table-column>
         </el-table>
@@ -255,5 +259,16 @@ defineExpose({ reload: load, folders });
     display: flex;
     gap: 8px;
     margin-bottom: 10px;
+}
+/* 单元格内的操作按钮：不允许换行，间距统一由 gap 控制 */
+.row-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    white-space: nowrap;
+}
+.row-actions :deep(.el-button) {
+    margin-left: 0;
+    padding: 0;
 }
 </style>

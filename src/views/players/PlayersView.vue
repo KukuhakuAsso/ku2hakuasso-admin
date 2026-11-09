@@ -182,6 +182,7 @@ import {
 } from "@/api/players";
 import { useCursorPage } from "@/composables/useCursorPage";
 import { useMuteActions } from "@/composables/useMuteActions";
+import { useWorkbenchBadges } from "@/composables/useWorkbenchBadges";
 import PageNav from "@/components/PageNav.vue";
 import MuteDialog from "@/components/MuteDialog.vue";
 import { pick, fmtTime, ACCOUNT_STATUS, statusMeta } from "@/utils/format";
@@ -189,6 +190,8 @@ import { extractErrorMessage } from "@/api/errors";
 
 const auth = useAuthStore();
 const router = useRouter();
+// 解封 = 处罚撤销：该主体会退出申诉工作台的「等官方反馈」列表，角标要立刻减
+const { refreshAppeals } = useWorkbenchBadges();
 const filters = reactive({ keyword: "", status: "", role: "" });
 
 const fetcher = (cursor) =>
@@ -290,6 +293,7 @@ async function toggleBan(row) {
             await unbanPlayer(row.id);
             // 解封不会恢复被封禁覆盖的原禁言，但玩家状态变了，刷新一下
             ElMessage.success("已解封（被封禁覆盖的原禁言不会恢复）");
+            void refreshAppeals();
             first();
             refreshMutes();
         } catch (err) {

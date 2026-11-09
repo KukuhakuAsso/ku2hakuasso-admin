@@ -36,7 +36,7 @@
                 style="width: 100%"
               >
                 <el-option
-                  v-for="item in teamOptions"
+                    v-for="item in grantTeams"
                   :key="item.id"
                   :label="teamLabel(item)"
                   :value="item.id"
@@ -89,6 +89,68 @@
       </el-col>
     </el-row>
 
+    <!-- 维护操作（原独立页面，仅 admin）：开赛时间 / 提示点结算 / 里程碑重查 -->
+    <el-card v-if="auth.isAdmin" shadow="never" class="maintenance">
+      <template #header>
+        <div class="card-head">
+          <span>维护操作</span>
+          <span class="hint inline">仅 admin 可用，均记入审计且不可撤销</span>
+        </div>
+      </template>
+      <el-form label-width="130px">
+        <el-form-item label="比赛开赛时间">
+          <div class="inline-row">
+            <el-date-picker
+              v-model="startAt"
+              type="datetime"
+              placeholder="设置官方开赛时间"
+              style="width: 240px"
+            />
+            <el-button type="primary" :loading="startAtLoading" @click="submitStartAt">
+              设置
+            </el-button>
+          </div>
+          <div class="hint">写入后玩家侧立即可读到新的开赛时间；留空表示未设置。</div>
+        </el-form-item>
+        <el-form-item label="提示点结算">
+          <el-button type="warning" :loading="settleLoading" @click="runSettleTips">
+            执行提示点结算
+          </el-button>
+          <div class="hint">按当前规则结算全部队伍的可发放提示点。</div>
+        </el-form-item>
+        <el-form-item label="里程碑重查">
+          <div class="inline-row">
+            <el-select
+              v-model="recheckTeamId"
+              filterable
+              clearable
+              :loading="teamLoading"
+              placeholder="选择要重查的队伍"
+              style="width: 260px"
+            >
+              <el-option
+                v-for="item in teamOptions"
+                :key="`m-${item.id}`"
+                :label="`${teamLabel(item)} · ${statusMeta(item.status, TEAM_STATUS).label}`"
+                :value="item.id"
+              />
+            </el-select>
+            <el-button
+              type="warning"
+              :loading="recheckLoading"
+              :disabled="!recheckTeamId"
+              @click="runRecheck"
+            >
+              重新检查里程碑
+            </el-button>
+          </div>
+          <div class="hint">
+            接口按队伍逐队重查（<code>team_id</code> 必填），完成后返回本次新增的里程碑。
+          </div>
+        </el-form-item>
+      </el-form>
+    </el-card>
+
     <el-dialog v-model="editDialog.visible" title="修改提示规则" width="440px">
       <el-form label-width="120px">
         <el-form-item label="每小时速率" required>
@@ -113,12 +175,18 @@
 </template>
 
 <script setup>
-import { onMounted, reactive, ref, watch } from "vue";
+import { computed, onMounted, reactive, ref, watch } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { useAuthStore } from "@/stores/auth";
 import { grantTips, getTipsRule, putTipsRule } from "@/api/tips";
+import {
+    recheckMilestones,
+    setContestStartAt,
+    settleTips,
+} from "@/api/maintenance";
 import { listTeams } from "@/api/teams";
 import { extractErrorMessage } from "@/api/errors";
+import { fmtTime, TEAM_STATUS, statusMeta } from "@/utils/format";
 
 const auth = useAuthStore();
 
@@ -139,16 +207,23 @@ async function loadRule() {
 
 const grant = reactive({ team_id: null, delta: 0, note: "", idem_key: "", loading: false });
 
-// 队伍下拉：只列正常队伍（status=2）——已解散 / 已禁言 / 已封禁的队伍不参与发放。
-// GET /admin/teams 只支持 status/cursor/limit（没有 keyword），所以翻到 hasMore=false
-// 为止把正常队伍全部载入，下拉做本地过滤；游标去重 + 计数上限只用于防异常死循环，
-// 不会因为队伍多就截断（旧版固定 5 页会漏掉第 500 个之后的队伍）。
+// 队伍下拉：翻到 hasMore=false 为止把队伍全部载入，下拉做本地过滤；
+// 游标去重 + 计数上限只用于防异常死循环，不会因为队伍多就截断
+//（旧版固定 5 页会漏掉第 500 个之后的队伍）。
+//
+// 这里取「全部队伍」（不带 status）：里程碑重查要能选到禁言 / 封禁中的队伍；
+// 发放提示点只允许正常队伍，用 grantTeams 在前端过滤（与原先 status=2 的口径一致）。
 const TEAM_PAGE_LIMIT = 100;
 const MAX_TEAM_PAGES = 1000;
 const teamOptions = ref([]);
 const teamLoading = ref(false);
 
 const teamLabel = (item) => `${item.name || "（未命名）"}（#${item.id}）`;
+
+// 发放 / 扣减只允许正常队伍（status=2）；已解散 / 禁言 / 封禁都不参与
+const grantTeams = computed(() =>
+    teamOptions.value.filter((item) => Number(item.status) === 2),
+);
 
 async function loadTeams() {
     teamLoading.value = true;
@@ -159,7 +234,6 @@ async function loadTeams() {
         let cursor;
         for (let page = 0; page < MAX_TEAM_PAGES; page += 1) {
             const data = await listTeams({
-                status: 2,
                 cursor,
                 limit: TEAM_PAGE_LIMIT,
             });
@@ -210,7 +284,7 @@ async function submitGrant() {
         return;
     }
 
-    const team = teamOptions.value.find((item) => item.id === grant.team_id);
+    const team = grantTeams.value.find((item) => item.id === grant.team_id);
     if (Math.abs(grant.delta) >= 1000) {
         try {
             await ElMessageBox.confirm(
@@ -285,6 +359,86 @@ async function submitEditRule() {
     }
 }
 
+// ---- 维护操作（原独立页面，仅 admin） ----
+const startAt = ref(null);
+const startAtLoading = ref(false);
+const settleLoading = ref(false);
+const recheckLoading = ref(false);
+const recheckTeamId = ref(null);
+
+async function submitStartAt() {
+    if (!startAt.value) {
+        ElMessage.warning("请选择开赛时间");
+        return;
+    }
+    startAtLoading.value = true;
+    try {
+        const data = await setContestStartAt({
+            start_at: new Date(startAt.value).toISOString(),
+        });
+        const at = data?.startAt ? fmtTime(data.startAt) : "已更新";
+        ElMessage.success(`已设置开赛时间：${at}`);
+    } catch (err) {
+        ElMessage.error(extractErrorMessage(err));
+    } finally {
+        startAtLoading.value = false;
+    }
+}
+
+async function runSettleTips() {
+    try {
+        await ElMessageBox.confirm(
+            "确认执行提示点结算？该操作会按当前规则结算全部队伍，并记入审计。",
+            "执行提示点结算",
+            { type: "warning", confirmButtonText: "执行结算" },
+        );
+    } catch {
+        return;
+    }
+    settleLoading.value = true;
+    try {
+        const data = await settleTips();
+        const settled = Number(data?.settled ?? 0);
+        const batches = Number(data?.batches ?? 0);
+        ElMessage.success(`结算完成：${settled} 个队伍 / ${batches} 批`);
+    } catch (err) {
+        ElMessage.error(extractErrorMessage(err));
+    } finally {
+        settleLoading.value = false;
+    }
+}
+
+async function runRecheck() {
+    // 接口要求 team_id 必填（按队伍逐队重查）
+    const teamId = recheckTeamId.value;
+    if (!teamId) {
+        ElMessage.warning("请选择要重查的队伍");
+        return;
+    }
+    const team = teamOptions.value.find((item) => item.id === teamId);
+    try {
+        await ElMessageBox.confirm(
+            `确认重新检查「${teamLabel(team || { id: teamId })}」的里程碑？`,
+            "重新检查里程碑",
+            { type: "warning", confirmButtonText: "开始重查" },
+        );
+    } catch {
+        return;
+    }
+    recheckLoading.value = true;
+    try {
+        const data = await recheckMilestones({ team_id: teamId });
+        const list = Array.isArray(data?.newMilestones) ? data.newMilestones : [];
+        ElMessage.success(
+            list.length ? `重查完成：新增 ${list.length} 个里程碑` : "重查完成：没有新增里程碑",
+        );
+    } catch (err) {
+        ElMessage.error(extractErrorMessage(err));
+    } finally {
+        recheckLoading.value = false;
+    }
+}
+
 onMounted(() => {
     loadRule();
     if (auth.isAdmin) loadTeams();
@@ -310,5 +464,23 @@ onMounted(() => {
     align-items: center;
     gap: 8px;
     width: 100%;
+}
+.maintenance {
+    margin-top: 16px;
+}
+.inline-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    width: 100%;
+}
+.hint.inline {
+    width: auto;
+    margin: 0;
+}
+.maintenance code {
+    padding: 0 4px;
+    background: var(--el-fill-color-light);
+    border-radius: 3px;
 }
 </style>

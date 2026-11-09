@@ -185,6 +185,7 @@ import {
     requoteHint,
 } from "@/api/msg";
 import { useCursorPage } from "@/composables/useCursorPage";
+import { useWorkbenchBadges } from "@/composables/useWorkbenchBadges";
 import PageNav from "@/components/PageNav.vue";
 import AttachmentGallery from "@/components/AttachmentGallery.vue";
 import { fmtTime, HINT_STATUS, statusMeta } from "@/utils/format";
@@ -193,6 +194,7 @@ import { extractErrorMessage } from "@/api/errors";
 const auth = useAuthStore();
 // 写操作需要 msg.hint.handle（admin 由 store 的 can() 直通）
 const canHandle = computed(() => auth.can("msg.hint.handle"));
+const { refreshHints } = useWorkbenchBadges();
 
 const STATUS_OPTIONS = [
     { value: "pending", label: "待报价" },
@@ -315,6 +317,8 @@ async function submitForm() {
             ElMessage.success("已报价，等待玩家确认扣费");
         }
         formDialog.visible = false;
+        // 待报价 → 已报价（或降价被受理），「提示工作台」角标要立刻跟上
+        void refreshHints();
         first();
     } catch (err) {
         ElMessage.error(extractErrorMessage(err));
@@ -339,6 +343,7 @@ async function declineCheaper(row) {
     try {
         await declineCheaperHint(row.id);
         ElMessage.success("已拒绝降价，当前报价已标记为最低报价");
+        void refreshHints();
         first();
     } catch (err) {
         ElMessage.error(extractErrorMessage(err));
@@ -368,6 +373,7 @@ async function rejectRow(row) {
     try {
         await rejectHint(row.id, { reason: reason.trim() });
         ElMessage.success("已拒绝");
+        void refreshHints();
         first();
     } catch (err) {
         ElMessage.error(extractErrorMessage(err));
