@@ -75,7 +75,11 @@ export function useMalleableWidget() {
     let token = 0;
 
     async function ensure(asset) {
+        // 描述符失效（切题 / 组件被停用）：先作废在飞的加载（cancel() 推进 token），
+        // 否则它回来时 current === token 仍成立，会把**旧组件**挂到本应显示 fallback 的区域内
         if (!asset?.tag || !asset?.url) {
+            cancel();
+            tag.value = "";
             status.value = "error";
             error.value = "该组件当前不可用（未登记或已停用）";
             return;
