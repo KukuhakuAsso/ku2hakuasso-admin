@@ -33,6 +33,8 @@ let sessionGeneration = 0;
 
 export function beginNewSession() {
     sessionGeneration += 1;
+    // 旧会话的在飞请求全部作废：既省掉无用的往返，也保证它们的续体不会再写回界面
+    cancelAllChannels();
 }
 
 export function getStoredAccount() {
@@ -129,7 +131,8 @@ function staleSessionError(json) {
 
 // 核心请求：返回响应体中的 data 字段；ok:false 或非 2xx 抛 ApiError。
 // retried 只由 401 分支内部使用：刷新令牌后只重试一次，避免「刷新成功但仍 401」时无限递归。
-export async function request(path, { method = "GET", body, retried = false } = {}) {
+// signal 用于取消：requestLatest() 会用它在同一频道换新请求时中断旧请求。
+export async function request(path, { method = "GET", body, retried = false, signal } = {}) {
     // 发请求时就记账次：响应（尤其 401）回来时若会话已经换了，
     // 这次请求属于旧账号，不能拿它去刷新 / 清空新会话，也不能把它重放到新身份上。
     const requestGeneration = sessionGeneration;
@@ -141,6 +144,7 @@ export async function request(path, { method = "GET", body, retried = false } = 
         method,
         headers,
         credentials: "include",
+        signal,
         body: body === undefined ? undefined : JSON.stringify(body),
     });
 
@@ -176,7 +180,7 @@ export async function request(path, { method = "GET", body, retried = false } = 
             throw staleSessionError(json);
         }
         if (refreshed) {
-            return request(path, { method, body, retried: true });
+            return request(path, { method, body, retried: true, signal });
         }
         clearSession();
         window.dispatchEvent(new window.Event("admin:unauthorized"));
@@ -199,10 +203,110 @@ export async function request(path, { method = "GET", body, retried = false } = 
     return json?.data;
 }
 
-export const get = (path, params) => request(`${path}${buildQuery(params)}`);
-export const post = (path, body) => request(path, { method: "POST", body });
-export const put = (path, body) => request(path, { method: "PUT", body });
-export const del = (path) => request(path, { method: "DELETE" });
+// get / post / put / del 的第三个参数是可选的请求选项（目前只有 signal），
+// 让「同频道最新一次生效」的调用方能把取消信号一路透到 fetch。
+export const get = (path, params, options) =>
+    request(`${path}${buildQuery(params)}`, options);
+export const post = (path, body, options) =>
+    request(path, { method: "POST", body, ...options });
+export const put = (path, body, options) =>
+    request(path, { method: "PUT", body, ...options });
+export const del = (path, options) => request(path, { method: "DELETE", ...options });
+
+// ---------------------------------------------------------------------------
+// 「同频道只有最新一次生效」（请求层的代际守卫）
+//
+// 页面里普遍的竞争：快速改筛选 / 连点搜索 / 轮询与手动刷新同时发 → 先发的请求
+// 后回来，把后发的结果覆盖掉（列表停在旧筛选上、分页错位）。
+// 这一层提供原语：同一个 abortKey 上只保留最后一次，
+//   ① 新请求会把旧请求 abort（省掉无用的往返）；
+//   ② 响应回来时再比一次"我还是不是最新的一次"——只 abort 不够，
+//      旧请求可能已经 resolve、续体还没跑完；
+//   ③ 换会话（登出 / 换账号）后旧频道全部作废。
+//
+// 不能在这一层解决、仍要调用点自己判断的两件事：
+//   · 「A → B → A」这类同一 URL 的来回切换：abortKey 必须按**目标**给（如题目 key），
+//     且组件仍要比对"当前展示的还是不是这个目标"；
+//   · 分页 append vs 整体替换、以及 await 之后的业务副作用（改余额、发事件等）。
+// ---------------------------------------------------------------------------
+
+// 被更新的一次请求取代（或被 abort）：不是错误，调用方应静默忽略。
+// 典型用法：catch (error) { if (isStaleRequest(error)) return; ... }
+export class StaleRequestError extends Error {
+    constructor() {
+        super("请求已被更新的一次取代");
+        this.name = "StaleRequestError";
+        this.stale = true;
+    }
+}
+
+export function isStaleRequest(error) {
+    return Boolean(error?.stale) || error?.name === "AbortError";
+}
+
+// abortKey → { seq, generation, controller }
+const channels = new Map();
+
+// 中止并清掉一个频道（组件卸载时调用，避免没人再读它的响应）。
+export function cancelChannel(abortKey) {
+    const key = String(abortKey);
+    const channel = channels.get(key);
+    if (!channel) return;
+    channel.controller.abort();
+    channels.delete(key);
+}
+
+// 会话结束（登出 / 换账号）：所有在飞频道一起作废。
+// beginNewSession 调它，避免旧账号的响应落到新会话的界面上。
+function cancelAllChannels() {
+    for (const channel of channels.values()) channel.controller.abort();
+    channels.clear();
+}
+
+/**
+ * 同一 abortKey 上「最后一次请求生效」。
+ *
+ * @param {string} abortKey 频道名。粒度必须是使用点（一个列表 / 一个面板），
+ *                          需要区分目标时带上目标 id：`hints:${puzzleKey}`
+ * @param {(ctx: { signal: AbortSignal }) => Promise<any>} task 真正发请求的函数
+ * @returns {Promise<any>} 最新一次的结果；被取代 / 被中断时抛 StaleRequestError
+ */
+export function requestLatest(abortKey, task) {
+    const key = String(abortKey);
+    const generation = sessionGeneration;
+    const previous = channels.get(key);
+    previous?.controller.abort();
+
+    const controller = new AbortController();
+    const current = {
+        generation,
+        seq: (previous?.seq ?? 0) + 1,
+        controller,
+    };
+    channels.set(key, current);
+
+    const isCurrent = () =>
+        channels.get(key) === current && current.generation === sessionGeneration;
+
+    return Promise.resolve()
+        .then(() => task({ signal: controller.signal }))
+        .then(
+            (value) => {
+                if (!isCurrent()) throw new StaleRequestError();
+                return value;
+            },
+            (error) => {
+                // 被 abort（新请求取代 / 会话切换）：属于 stale，不是错误
+                if (error?.name === "AbortError") throw new StaleRequestError();
+                // 期间换了会话：旧会话的错误也不该冒到新界面上
+                if (!isCurrent()) throw new StaleRequestError();
+                throw error;
+            },
+        )
+        .finally(() => {
+            if (channels.get(key) === current) channels.delete(key);
+        });
+}
 
 // 受保护资源的二进制取回（素材、组件 ESM）。
 //
