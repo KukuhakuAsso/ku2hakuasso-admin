@@ -14,7 +14,7 @@
                 style="width: 240px"
                 clearable
                 filterable
-                @change="search"
+                @change="onFilterChange"
             >
                 <el-option
                     v-for="item in puzzleOptions"
@@ -191,6 +191,8 @@ async function load({ reset = false } = {}) {
         items.value = reset ? page : [...items.value, ...page];
         nextCursor.value = data?.nextCursor ?? null;
         hasMore.value = Boolean(data?.hasMore);
+        // 失败提示只针对那一次请求：后续成功取到数据就撤掉
+        error.value = "";
     } catch (err) {
         if (current !== token) return;
         error.value = describeApiError(err, {
@@ -206,6 +208,14 @@ async function load({ reset = false } = {}) {
 }
 
 function search() {
+    load({ reset: true });
+}
+
+// 换题目筛选：旧行与旧游标都属于上一次查询，不能留给新筛选复用 —— 否则这次请求失败时，
+// 表格里留着别的题的行、「加载更早的提交」还会拿旧游标配新筛选去查。
+// 与玩家端 SubmissionHistory 一致：换题 = 清空后重取，同一筛选的「刷新」只重取第一页。
+function onFilterChange() {
+    clear();
     load({ reset: true });
 }
 

@@ -1,3 +1,16 @@
+<script>
+// 默认字段表：defineProps() 会被提升到模块作用域，不能引用 <script setup> 里声明的变量，
+// 所以放在普通 <script> 块里。
+const PAGE_FIELDS = [
+    { key: "description", label: "描述" },
+    { key: "cover", label: "封面" },
+    { key: "malleable", label: "可塑区" },
+    { key: "attachments", label: "附件" },
+    { key: "folderKey", label: "所属目录" },
+    { key: "unlock", label: "解锁规则" },
+];
+</script>
+
 <script setup>
 // 页面三方合并（base / 本地草稿 / 服务端），用于「服务端已更新，而本地还有未保存修改」时的取舍。
 //
@@ -18,18 +31,17 @@ const props = defineProps({
     remote: { type: Object, default: null },
     // 用于把 assetId 显示成文件名
     media: { type: Array, default: () => [] },
+    // 参与比对的字段表；默认是「页面内容」的 6 个字段
+    fields: { type: Array, default: () => PAGE_FIELDS },
+    // 从三方 payload 里取某个字段的值；默认按页面结构取
+    readField: { type: Function, default: null },
+    // 由「每行最终采用的值」组装结果 payload；默认按页面结构组装
+    buildResult: { type: Function, default: null },
+    // 单元格展示文案；默认按页面字段给摘要
+    formatField: { type: Function, default: null },
 });
 
 const emit = defineEmits(["update:modelValue", "apply", "closed"]);
-
-const FIELDS = [
-    { key: "description", label: "描述" },
-    { key: "cover", label: "封面" },
-    { key: "malleable", label: "可塑区" },
-    { key: "attachments", label: "附件" },
-    { key: "folderKey", label: "所属目录" },
-    { key: "unlock", label: "解锁规则" },
-];
 
 const perField = ref(false);
 const choices = ref({});
@@ -40,20 +52,25 @@ const visible = computed({
     set: (value) => emit("update:modelValue", value),
 });
 
-function pick(payload, key) {
+function pageField(payload, key) {
     if (!payload) return null;
     if (key === "folderKey") return payload.folderKey ?? null;
     if (key === "unlock") return payload.unlock ?? { kind: "sequence" };
     return payload.page?.[key] ?? null;
 }
 
+// 取字段值：默认按页面结构取，调用方可以传自己的 readField 适配扁平 payload
+function readValue(payload, key) {
+    return props.readField ? props.readField(payload, key) : pageField(payload, key);
+}
+
 const same = (a, b) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
 
 const rows = computed(() =>
-    FIELDS.map((field) => {
-        const base = pick(props.base, field.key);
-        const local = pick(props.local, field.key);
-        const remote = pick(props.remote, field.key);
+    props.fields.map((field) => {
+        const base = readValue(props.base, field.key);
+        const local = readValue(props.local, field.key);
+        const remote = readValue(props.remote, field.key);
 
         let status = "same";
         if (!same(local, remote)) {
@@ -110,6 +127,8 @@ const UNLOCK_LABEL = {
 // 每个字段一句话摘要，够用户判断「要不要」即可，细节可展开
 function summary(row, side) {
     const value = side === "local" ? row.local : row.remote;
+    // 调用方自带格式化（如主数据的「启用 / 停用」）
+    if (props.formatField) return props.formatField(value, row);
     if (row.key === "description") {
         if (!value) return "（空）";
         const text = String(value).replace(/\s+/g, " ");
@@ -165,6 +184,13 @@ function chooseValue(row) {
 }
 
 function mergedPayload() {
+    // 调用方自带组装方式（如主数据是扁平对象）：把每行选中的值原样交回去
+    if (props.buildResult) {
+        const values = {};
+        for (const row of rows.value) values[row.key] = chooseValue(row);
+        return props.buildResult(values);
+    }
+
     const page = {};
     let folderKey = null;
     let unlock = { kind: "sequence" };

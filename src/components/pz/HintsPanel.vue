@@ -3,9 +3,10 @@
 //
 // 与「提示工作台」（人工求提示的报价 / 答复）完全分开：这里只维护挂在这道题上的提示条目。
 // 保存成功会让题目 page_rev +1，所以要把新 rev 回传给出题台。
-import { ref, watch } from "vue";
+import { getCurrentScope, onScopeDispose, ref, watch } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { getPuzzleHints, putPuzzleHints } from "@/api/pz";
+import { cancelChannel, isStaleRequest, requestLatest } from "@/api/http";
 import { describeApiError } from "@/api/errors";
 
 const props = defineProps({
@@ -34,15 +35,41 @@ function toModel(list) {
     }));
 }
 
+// 切题代际守卫：一个面板实例一个频道。
+// 只比对 key 不够 —— A→B→A 时两次 key 相同，迟到的第一次 A 仍会盖掉第二次 A 的结果，
+// 而这里的数据一保存就会写回服务端（用错题的 rev / 提示列表覆盖），必须先按序号作废。
+let panelSeed = 0;
+const abortKey = `pz-hints#${++panelSeed}`;
+if (getCurrentScope()) {
+    onScopeDispose(() => cancelChannel(abortKey));
+}
+
 async function load() {
-    if (!props.puzzleKey) return;
+    const key = props.puzzleKey;
+    if (!key) {
+        // 取消选中：中断在飞的请求并清空，否则迟到的响应会落在一个已经隐藏的面板上
+        cancelChannel(abortKey);
+        hints.value = [];
+        serverCount.value = 0;
+        rev.value = 0;
+        loading.value = false;
+        return;
+    }
+
     loading.value = true;
     try {
-        const data = await getPuzzleHints(props.puzzleKey);
+        const data = await requestLatest(abortKey, ({ signal }) =>
+            getPuzzleHints(key, { signal }),
+        );
+        // 目标已经换走：这次结果属于另一道题，丢弃（loading 由最新一次收尾）
+        if (key !== props.puzzleKey) return;
         rev.value = data?.rev ?? 0;
         hints.value = toModel(data?.hints);
         serverCount.value = hints.value.length;
+        loading.value = false;
     } catch (error) {
+        if (isStaleRequest(error) || key !== props.puzzleKey) return;
+        loading.value = false;
         ElMessage.error(
             describeApiError(error, {
                 fallback: "提示读取失败",
@@ -51,8 +78,6 @@ async function load() {
         );
         hints.value = [];
         serverCount.value = 0;
-    } finally {
-        loading.value = false;
     }
 }
 
@@ -143,15 +168,21 @@ async function save() {
     }
 
     saving.value = true;
+    // 目标在「点保存这一刻」确定：请求体里的 key 与 payload 必须属于同一道题
+    const key = props.puzzleKey;
     try {
-        const data = await putPuzzleHints(props.puzzleKey, payload());
+        const data = await putPuzzleHints(key, payload());
+        // 保存期间切了题：这份结果只属于原来那道题，写进当前面板就会变成
+        // 「A 的提示 / rev 覆盖 B」，再点一次保存还会把 A 的列表整表写进 B。
+        if (key !== props.puzzleKey) return;
         rev.value = data?.rev ?? rev.value + 1;
         // 以服务端返回为准：新增的提示会拿到 id，ord 已按顺序重排
         hints.value = toModel(data?.hints);
         serverCount.value = hints.value.length;
         ElMessage.success(`已保存，rev ${rev.value}`);
-        emit("saved", { key: props.puzzleKey, rev: rev.value });
+        emit("saved", { key, rev: rev.value });
     } catch (error) {
+        if (key !== props.puzzleKey) return;
         ElMessage.error(
             describeApiError(error, {
                 fallback: "提示保存失败",

@@ -4,10 +4,11 @@
 //
 // 2026-11-05 起按目录所有人隔离：staff 只看到、只改得了自己的目录；
 // owner_id 只有 admin 能传（staff 传 → 403），历史目录 ownerId=null 时仅 admin 可看/可改。
-import { computed, ref } from "vue";
+import { computed, getCurrentScope, onScopeDispose, ref } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { deleteFolder, listFolders, upsertFolder } from "@/api/pz";
 import { listAuthorCandidates } from "@/api/accounts";
+import { cancelChannel, isStaleRequest, requestLatest } from "@/api/http";
 import { useAuthStore } from "@/stores/auth";
 import { describeApiError } from "@/api/errors";
 import UnlockForm from "@/components/pz/UnlockForm.vue";
@@ -39,21 +40,33 @@ function emptyForm() {
     };
 }
 
+// 列表是全局的（不按题/目录分片），所以只要「同一面板里最新一次生效」：
+// 连点刷新、或保存后自动刷新与手动刷新撞在一起时，旧结果不会盖掉新结果。
+let panelSeed = 0;
+const abortKey = `pz-folders#${++panelSeed}`;
+if (getCurrentScope()) {
+    onScopeDispose(() => cancelChannel(abortKey));
+}
+
 async function load() {
     loading.value = true;
     try {
-        const data = await listFolders();
+        const data = await requestLatest(abortKey, ({ signal }) =>
+            listFolders({ signal }),
+        );
         folders.value = data?.folders ?? [];
         emit("changed", folders.value);
+        loading.value = false;
     } catch (error) {
+        // 被更新的一次取代：保留它写好的列表，loading 留给那一次收尾
+        if (isStaleRequest(error)) return;
+        loading.value = false;
         ElMessage.error(
             describeApiError(error, {
                 fallback: "目录列表加载失败",
                 forbidden: "没有出题权限，请联系 admin 授予 pz.content.edit",
             }),
         );
-    } finally {
-        loading.value = false;
     }
 }
 

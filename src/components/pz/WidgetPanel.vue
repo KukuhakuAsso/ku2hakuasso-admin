@@ -4,7 +4,7 @@
 // 版本号由服务端分配并自动递增（1.0.0 → 1.0.1），前端不再填版本；
 // 发布后引用旧版本的题目会被自动改到新版本（这些题目的 page_rev 会 +1），
 // 每个组件只保留最新 ESM，Vue 源码留最近 3 版 —— 更早的源码不可再读取。
-import { computed, ref } from "vue";
+import { computed, getCurrentScope, onScopeDispose, ref } from "vue";
 import { ElMessage } from "element-plus";
 import {
     compileWidget,
@@ -13,6 +13,7 @@ import {
     signWidgetSource,
     uploadToSignedUrl,
 } from "@/api/pz";
+import { cancelChannel, isStaleRequest, requestLatest } from "@/api/http";
 import SourceEditor from "@/components/pz/SourceEditor.vue";
 import { extractErrorMessage } from "@/api/errors";
 
@@ -30,16 +31,26 @@ const source = ref("");
 const NAME_RE = /^[a-z][a-z0-9-]{2,31}$/;
 const MAX_SOURCE_BYTES = 128 * 1024;
 
+// 与目录面板同理：全局列表，只要求「同一面板里最新一次生效」
+let panelSeed = 0;
+const abortKey = `pz-widgets#${++panelSeed}`;
+if (getCurrentScope()) {
+    onScopeDispose(() => cancelChannel(abortKey));
+}
+
 async function load() {
     loading.value = true;
     try {
-        const data = await listWidgets();
+        const data = await requestLatest(abortKey, ({ signal }) =>
+            listWidgets({ signal }),
+        );
         widgets.value = data?.widgets ?? [];
         emit("changed", widgets.value);
-    } catch (error) {
-        ElMessage.error(extractErrorMessage(error, "组件列表加载失败"));
-    } finally {
         loading.value = false;
+    } catch (error) {
+        if (isStaleRequest(error)) return;
+        loading.value = false;
+        ElMessage.error(extractErrorMessage(error, "组件列表加载失败"));
     }
 }
 

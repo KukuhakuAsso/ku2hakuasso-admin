@@ -9,7 +9,7 @@ import { computed, ref } from "vue";
 import { ElMessage } from "element-plus";
 import { getPuzzlePage, listFolders, listPuzzles, listWidgets, putPuzzle } from "@/api/pz";
 import { pick } from "@/utils/format";
-import { describeApiError } from "@/api/errors";
+import { describeApiError, extractErrorMessage } from "@/api/errors";
 import { useAuthStore } from "@/stores/auth";
 import PageForm from "@/components/pz/PageForm.vue";
 import PuzzleMetaForm from "@/components/pz/PuzzleMetaForm.vue";
@@ -111,10 +111,30 @@ async function loadPuzzles() {
 async function refreshList() {
     try {
         const data = await listPuzzles();
-        if (Array.isArray(data?.items)) puzzles.value = data.items;
+        if (Array.isArray(data?.items)) puzzles.value = reuseUnchangedRows(data.items);
     } catch {
         // 静默失败：主数据已保存成功，列表稍后刷新即可
     }
+}
+
+// 逐行比对，字段完全没变的行沿用**原来的对象**。
+//
+// 不能整体替换：selectedRow 是 computed(() => puzzles.value.find(...))，
+// 数组一换，它就是新对象；而 PuzzleMetaForm 靠 watch(props.row) 决定要不要重置表单，
+// 于是「后台刷新」会被当成「换了一道题」——把另一道题正在编辑的未保存改动直接冲掉。
+function reuseUnchangedRows(fresh) {
+    const current = new Map(puzzles.value.map((item) => [item.key, item]));
+    return fresh.map((item) => {
+        const existing = current.get(item.key);
+        return existing && sameRow(existing, item) ? existing : item;
+    });
+}
+
+// 列表行的字段都是标量，浅比较即可判定「这一行有没有变化」
+function sameRow(a, b) {
+    const keys = Object.keys(a);
+    if (keys.length !== Object.keys(b).length) return false;
+    return keys.every((key) => Object.is(a[key], b[key]));
 }
 
 // 拉一次某题的服务端存档；404 / 空响应都落到空骨架（题目可能还没写过页面）
@@ -198,6 +218,10 @@ async function submitCreate() {
             // 新建题的 author_id 由后端归到当前账号
             authorId: puzzle.author_id ?? myAccountId.value,
             authorUsername: auth.account?.username ?? null,
+            // 新建题必然归当前账号，作者本人 / admin 都有权查看答案。
+            // PuzzleMetaForm 用「有没有 answer 这个键」判断权限（后端无权限时整个字段不返回），
+            // 少这个键会被当成无权查看：答案框禁用、也不会进 PUT body。
+            answer: "",
         });
         createOpen.value = false;
         keyword.value = "";

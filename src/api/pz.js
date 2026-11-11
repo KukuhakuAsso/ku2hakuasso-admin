@@ -44,7 +44,7 @@ export const compileWidget = ({ name, objectKey, note }) =>
 
 // 组件清单：每个 name 只返回最新 ESM 与仍留档的源码（sources，最多 3 版）。
 // status 1 = 可用，2 = 停用（玩家侧下发 404）。
-export const listWidgets = () => get("/admin/pz/widgets");
+export const listWidgets = (options) => get("/admin/pz/widgets", undefined, options);
 
 // 读取仍留档的某个版本的 Vue 源码；404 = 该版本没留档或已被清理。
 // 响应 { source: { name, version, source, sizeBytes, sourceHash, createdAt } }
@@ -139,8 +139,9 @@ export const putPuzzlePage = (puzzleKey, body) =>
 // ---------- 预置提示（api-10 §10.12） ----------
 
 // 读某题提示草稿（含正文）：{ rev, hints: [{ id, ord, name, content, cost, createdAt, updatedAt }] }
-export const getPuzzleHints = async (puzzleKey) => {
-    const data = await get(`/admin/pz/puzzle/${key(puzzleKey)}/hints`);
+// options 目前只有 signal：切题时由 requestLatest 中断上一次请求
+export const getPuzzleHints = async (puzzleKey, options) => {
+    const data = await get(`/admin/pz/puzzle/${key(puzzleKey)}/hints`, undefined, options);
     return data ?? { rev: 0, hints: [] };
 };
 
@@ -165,7 +166,7 @@ export const getPuzzlePreview = async (puzzleKey) => {
 
 // 目录列表：[{ key, title, ord, enabled, unlock, ownerId, ownerUsername, createdAt, updatedAt }]
 // 2026-11-05 起按目录所有人隔离：admin 返回全部；staff 只返回 owner_id = 自己的目录。
-export const listFolders = () => get("/admin/pz/folders");
+export const listFolders = (options) => get("/admin/pz/folders", undefined, options);
 
 // 新建或更新目录（幂等 upsert）；key 一旦建立不要改，赛事内视为标识。
 // owner_id 仅 admin 可传（staff 传 → 403）；新建时 owner_id = 当前账号。
