@@ -298,7 +298,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, reactive, ref, watch } from "vue";
+import { computed, reactive, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { ElMessage } from "element-plus";
 import { useAuthStore } from "@/stores/auth";
@@ -340,7 +340,6 @@ function firstVisibleTab() {
     return TAB_NAMES.find((name) => tabVisible.value[name]) || "notify";
 }
 
-// 支持深链（旧 /announcements 会重定向到 ?tab=announce）；指定的页签不可见时回落到第一个可见的
 const requested = String(route.query.tab || "");
 const activeTab = ref(
     TAB_NAMES.includes(requested) && tabVisible.value[requested]
@@ -357,7 +356,7 @@ watch(
     { deep: true },
 );
 
-// 同一组件内跳转（如旧 /announcements 重定向到 ?tab=announce）不会重建实例，
+// 同一路由内只改 query（如 ?tab= 变化）不会重建实例，
 // setup 只跑一次，所以 query 变化要单独接住
 watch(
     () => route.query.tab,
@@ -443,6 +442,8 @@ const TEAM_PAGE_LIMIT = 100;
 const MAX_TEAM_PAGES = 1000;
 const teamOptions = ref([]);
 const teamLoading = ref(false);
+// 只有真正拉全之后才置位：失败时保持 false，切回页签会重试
+const teamsLoaded = ref(false);
 
 function teamLabel(item) {
     if (!item) return "";
@@ -451,6 +452,8 @@ function teamLabel(item) {
 }
 
 async function loadTeams() {
+    // 在途不重发（权限变化与切页签两个触发点可能挨着触发）；已完成也不重发（要翻完全部分页）
+    if (teamLoading.value || teamsLoaded.value) return;
     teamLoading.value = true;
     try {
         const items = [];
@@ -471,6 +474,7 @@ async function loadTeams() {
             cursor = data.nextCursor;
         }
         teamOptions.value = items;
+        teamsLoaded.value = true;
     } catch (err) {
         ElMessage.error(extractErrorMessage(err));
     } finally {
@@ -626,11 +630,20 @@ const historyLoaded = ref(false);
 watch(
     activeTab,
     (tab) => {
-        if (tab !== "history" || historyLoaded.value) return;
-        historyLoaded.value = true;
-        first().catch((err) =>
-            ElMessage.error(extractErrorMessage(err, "读取公告历史失败")),
-        );
+        // 定向通知页签：权限晚到（挂载时没有 msg.notify.send，之后快照更新才拿到）时补拉队伍，
+        // 也顺带给了「上次加载失败 → 切走再切回」一个重试入口；已经拉全过则是空操作。
+        // 必须判 canNotify：没有该权限时 activeTab 也会回落到 "notify"，不能因此去翻全部队伍
+        if (tab === "notify" && canNotify.value) loadTeams();
+        // loading 挡「请求在飞时来回切页签」，historyLoaded 挡「已经成功加载过」。
+        // 失败时不置位，切回该页签就会重试——空列表的分页按钮全是禁用的，没有别的入口
+        if (tab !== "history" || historyLoaded.value || loading.value) return;
+        first()
+            .then(() => {
+                historyLoaded.value = true;
+            })
+            .catch((err) =>
+                ElMessage.error(extractErrorMessage(err, "读取公告历史失败")),
+            );
     },
     { immediate: true },
 );
@@ -683,10 +696,16 @@ function openInternalHistory() {
     router.push({ path: "/letters/messages", query: { channel: "internal" } });
 }
 
-onMounted(() => {
-    // 队伍收件人只服务「定向通知」页签：没有该权限就不必翻完全部队伍
-    if (canNotify.value) loadTeams();
-});
+// 队伍收件人只服务「定向通知」页签：没有该权限就不必翻完全部队伍。
+// 权限快照是异步来的（登录 / 401 刷新都会同步一次 account），所以不能只在挂载时判一次：
+// 从「没有 msg.notify.send」变成「有」时要补拉（immediate 覆盖挂载时就有权限的情况）
+watch(
+    canNotify,
+    (value) => {
+        if (value) loadTeams();
+    },
+    { immediate: true },
+);
 </script>
 
 <style scoped>
