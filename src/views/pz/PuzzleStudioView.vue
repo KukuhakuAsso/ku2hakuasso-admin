@@ -9,7 +9,7 @@ import { computed, ref } from "vue";
 import { ElMessage } from "element-plus";
 import { getPuzzlePage, listFolders, listPuzzles, listWidgets, putPuzzle } from "@/api/pz";
 import { pick } from "@/utils/format";
-import { describeApiError } from "@/api/errors";
+import { describeApiError, extractErrorMessage } from "@/api/errors";
 import { useAuthStore } from "@/stores/auth";
 import PageForm from "@/components/pz/PageForm.vue";
 import PuzzleMetaForm from "@/components/pz/PuzzleMetaForm.vue";
@@ -198,6 +198,10 @@ async function submitCreate() {
             // 新建题的 author_id 由后端归到当前账号
             authorId: puzzle.author_id ?? myAccountId.value,
             authorUsername: auth.account?.username ?? null,
+            // 新建题必然归当前账号，作者本人 / admin 都有权查看答案。
+            // PuzzleMetaForm 用「有没有 answer 这个键」判断权限（后端无权限时整个字段不返回），
+            // 少这个键会被当成无权查看：答案框禁用、也不会进 PUT body。
+            answer: "",
         });
         createOpen.value = false;
         keyword.value = "";

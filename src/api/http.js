@@ -345,9 +345,10 @@ export async function fetchResource(path, { accept = "*/*", retried = false } = 
 // 邮件 / 求提示附件的 url 是受保护路径（`/api/msg/media/<id>`，会 302 到对象存储的短签名地址），
 // 响应体不是 JSON 信封，所以不能走 request()。这里复用同一套令牌与刷新逻辑：
 // 401 先刷新令牌再重试一次；只有指向本端 API 的地址才带令牌与 Cookie（信任边界）。
-export async function fetchWithAuth(url, { retried = false } = {}) {
+// accept 由调用方指定：素材 / 组件 ESM 是二进制或脚本，不能收 application/json。
+export async function fetchWithAuth(url, { retried = false, accept = "" } = {}) {
     const trusted = isApiUrl(url);
-    const headers = trusted ? getApiHeaders() : {};
+    const headers = trusted ? getApiHeaders(accept ? { Accept: accept } : {}) : {};
     const token = trusted ? getToken() : null;
     if (token) headers.Authorization = `Bearer ${token}`;
 
@@ -360,7 +361,7 @@ export async function fetchWithAuth(url, { retried = false } = {}) {
 
     const refreshed = await refreshSession();
     if (!refreshed) return response;
-    return fetchWithAuth(url, { retried: true });
+    return fetchWithAuth(url, { retried: true, accept });
 }
 
 // 取受保护图片：先按本端 API 前缀重写路径，再带令牌取字节，交给调用方转 blob URL。
