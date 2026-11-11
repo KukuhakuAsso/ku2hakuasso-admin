@@ -85,7 +85,9 @@ export const confirmMedia = ({
     });
 
 // 某题已登记的素材清单（页面里用 assetId 引用它们）。
-export const listMedia = (puzzleKey) => get("/admin/pz/media", { puzzleKey });
+// options 目前只有 signal：切题时由 requestLatest 中断上一次请求
+export const listMedia = (puzzleKey, options) =>
+    get("/admin/pz/media", { puzzleKey }, options);
 
 // 直传本体：按 sign 返回的方式把文件 PUT 到对象存储（不经过后端）。
 // 返回 { promise }，promise 在 2xx 时 resolve；onProgress 收到 0–100。

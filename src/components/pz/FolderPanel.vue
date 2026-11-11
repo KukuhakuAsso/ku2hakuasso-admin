@@ -4,7 +4,7 @@
 //
 // 2026-11-05 起按目录所有人隔离：staff 只看到、只改得了自己的目录；
 // owner_id 只有 admin 能传（staff 传 → 403），历史目录 ownerId=null 时仅 admin 可看/可改。
-import { computed, getCurrentScope, onScopeDispose, ref } from "vue";
+import { computed, getCurrentScope, onScopeDispose, ref, useId } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { deleteFolder, listFolders, upsertFolder } from "@/api/pz";
 import { listAuthorCandidates } from "@/api/accounts";
@@ -42,8 +42,8 @@ function emptyForm() {
 
 // 列表是全局的（不按题/目录分片），所以只要「同一面板里最新一次生效」：
 // 连点刷新、或保存后自动刷新与手动刷新撞在一起时，旧结果不会盖掉新结果。
-let panelSeed = 0;
-const abortKey = `pz-folders#${++panelSeed}`;
+// 每个实例一个频道（`<script setup>` 里的计数器每个实例都会重置成 0，会互相 abort）
+const abortKey = `pz-folders#${useId()}`;
 if (getCurrentScope()) {
     onScopeDispose(() => cancelChannel(abortKey));
 }

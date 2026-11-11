@@ -3,7 +3,7 @@
 //
 // 与「提示工作台」（人工求提示的报价 / 答复）完全分开：这里只维护挂在这道题上的提示条目。
 // 保存成功会让题目 page_rev +1，所以要把新 rev 回传给出题台。
-import { getCurrentScope, onScopeDispose, ref, watch } from "vue";
+import { getCurrentScope, onScopeDispose, ref, useId, watch } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { getPuzzleHints, putPuzzleHints } from "@/api/pz";
 import { cancelChannel, isStaleRequest, requestLatest } from "@/api/http";
@@ -38,8 +38,8 @@ function toModel(list) {
 // 切题代际守卫：一个面板实例一个频道。
 // 只比对 key 不够 —— A→B→A 时两次 key 相同，迟到的第一次 A 仍会盖掉第二次 A 的结果，
 // 而这里的数据一保存就会写回服务端（用错题的 rev / 提示列表覆盖），必须先按序号作废。
-let panelSeed = 0;
-const abortKey = `pz-hints#${++panelSeed}`;
+// 每个实例一个频道（`<script setup>` 里的计数器每个实例都会重置成 0，会互相 abort）
+const abortKey = `pz-hints#${useId()}`;
 if (getCurrentScope()) {
     onScopeDispose(() => cancelChannel(abortKey));
 }
