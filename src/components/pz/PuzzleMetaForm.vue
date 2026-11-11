@@ -101,8 +101,9 @@ function toForm(row) {
 // 与服务端「已对齐」的字段快照：既用来判断表单脏没脏，也作为三方合并的 base。
 let appliedKey = "";
 let baseline = null;
-// 选择代次：每次把某个题的行回填进来（换题 / 后台刷新应用 / 合并结果）都 +1。
-// 保存是异步的，期间用户可能已经切到别的题；那时的提交值不能再当新题的基准。
+// 选择代次：选中哪道题（以及它的基准/表单）被**真的替换**时 +1 ——
+// 换题、应用远端行、合并结果。保存是异步的，期间若已换题，那次提交的值不能再当现在的基准。
+// 注意「只推进基准」的 REBASE 不在这里：它的 baseline 值本来就等于旧值，什么都没变。
 let selectionGen = 0;
 let prompting = false;
 let closing = false;
@@ -173,9 +174,12 @@ function handleRow(row) {
         return;
     }
     if (action === META_ROW_ACTION.REBASE) {
+        // 注意这里不推进选择代次：REBASE 的条件就是 remote 已对齐 baseline，
+        // 所以 baseline 的新值等于旧值、题也没变 —— 属于「什么都没变」。
+        // 若在这里 +1，会把在飞的保存误判成「已切题」而跳过基准更新，
+        // 保存后带着新草稿刷新就会弹出一个假的三方合并。
         appliedKey = row.key;
         baseline = remote;
-        selectionGen += 1;
         return;
     }
 
