@@ -5,9 +5,10 @@
 //   * objectKey 原样传回，不自行生成；
 //   * 上传地址 10 分钟有效，且含临时授权 —— 不打印日志、不持久化、不进缓存；
 //   * confirm 幂等：重复确认同一 objectKey 返回已有素材。
-import { computed, ref, watch } from "vue";
+import { computed, getCurrentScope, onScopeDispose, ref, useId, watch } from "vue";
 import { ElMessage } from "element-plus";
 import { listMedia, signMedia, confirmMedia, uploadToSignedUrl } from "@/api/pz";
+import { cancelChannel, isStaleRequest, requestLatest } from "@/api/http";
 import { describeApiError } from "@/api/errors";
 import { MEDIA_KINDS, validateMediaFile } from "@/config/pz";
 
@@ -33,47 +34,50 @@ const hint = computed(() =>
     ).join(" · "),
 );
 
-// 每次加载都 +1；晚到的响应靠它判断自己是否已被后续加载取代。
-// 只比 key 不够 —— A→B→A 时两次 key 相同，晚到的 A 仍会盖掉第二次的 A。
-let loadSeq = 0;
-
-function isStaleLoad(seq, key) {
-    return seq !== loadSeq || key !== props.puzzleKey;
+// 切题代际守卫：一个面板实例一个频道。
+// 只比对 key 不够 —— A→B→A 时两次 key 相同，迟到的第一次 A 仍会盖掉第二次 A 的结果。
+// 每个实例一个频道（`<script setup>` 里的计数器每个实例都会重置成 0，会互相 abort）
+const abortKey = `pz-media#${useId()}`;
+if (getCurrentScope()) {
+    onScopeDispose(() => cancelChannel(abortKey));
 }
 
 async function load() {
     const key = props.puzzleKey;
-    const seq = ++loadSeq;
+    if (!key) {
+        // 取消选中：中断在飞的请求并清空，否则迟到的响应会落在已经隐藏的面板上
+        cancelChannel(abortKey);
+        items.value = [];
+        emit("changed", items.value);
+        loading.value = false;
+        return;
+    }
 
     // 先清空并把空清单抛给父级：切题/加载期间，旧题的素材不能再留在
     // 封面与附件下拉里被选中（保存时会被后端以「素材不属于本题」拒绝）
     items.value = [];
     emit("changed", items.value);
 
-    if (!key) {
-        loading.value = false;
-        return;
-    }
-
     loading.value = true;
     try {
-        const data = await listMedia(key);
-        // 迟到的响应直接丢弃，否则会把旧题的素材塞进新题的下拉
-        if (isStaleLoad(seq, key)) return;
+        const data = await requestLatest(abortKey, ({ signal }) =>
+            listMedia(key, { signal }),
+        );
+        // 目标已经换走：这次结果属于另一道题，丢弃（loading 由最新一次收尾）
+        if (key !== props.puzzleKey) return;
         items.value = data?.media ?? [];
         emit("changed", items.value);
+        loading.value = false;
     } catch (error) {
-        // 迟到的错误同样别弹，它已经和当前选中的题无关了
-        if (isStaleLoad(seq, key)) return;
+        // 迟到的 / 被取代的错误同样别弹，它已经和当前选中的题无关了
+        if (isStaleRequest(error) || key !== props.puzzleKey) return;
+        loading.value = false;
         ElMessage.error(
             describeApiError(error, {
                 fallback: "素材列表加载失败",
                 forbidden: "只能查看自己名下的题目素材",
             }),
         );
-    } finally {
-        // 只有最新一次加载能收起 loading，否则会把新题的转圈关掉
-        if (!isStaleLoad(seq, key)) loading.value = false;
     }
 }
 

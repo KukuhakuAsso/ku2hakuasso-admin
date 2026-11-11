@@ -101,6 +101,9 @@ function toForm(row) {
 // 与服务端「已对齐」的字段快照：既用来判断表单脏没脏，也作为三方合并的 base。
 let appliedKey = "";
 let baseline = null;
+// 选择代次：每次把某个题的行回填进来（换题 / 后台刷新应用 / 合并结果）都 +1。
+// 保存是异步的，期间用户可能已经切到别的题；那时的提交值不能再当新题的基准。
+let selectionGen = 0;
 let prompting = false;
 let closing = false;
 let pendingRow = null;
@@ -137,6 +140,7 @@ function applyRow(row) {
     Object.assign(form, toForm(row));
     appliedKey = row?.key ?? "";
     baseline = row ? snapOfRow(row) : null;
+    selectionGen += 1;
 }
 
 // 行变了要区分三件事：换题 / 后台刷新 / 服务端也改了
@@ -171,6 +175,7 @@ function handleRow(row) {
     if (action === META_ROW_ACTION.REBASE) {
         appliedKey = row.key;
         baseline = remote;
+        selectionGen += 1;
         return;
     }
 
@@ -198,11 +203,13 @@ function onMergeApply({ mode, payload }) {
             Object.assign(form, payload ?? {});
             appliedKey = row.key;
             baseline = snapOfRow(row);
+            selectionGen += 1;
         } else {
             // 保留我的修改：草稿不动，但基准要推进到这次看到的服务端内容，
             // 否则下一轮同一处服务端改动会被当成「仅服务端改过」而反复弹窗
             appliedKey = row.key;
             baseline = snapOfRow(row);
+            selectionGen += 1;
         }
     }
 }
@@ -357,11 +364,15 @@ async function save() {
         return;
     }
 
+    const savingKey = key.value;
+    const selectionAtSave = selectionGen;
     saving.value = true;
     try {
-        const data = await putPuzzle(key.value, body);
-        // 这次提交的内容就是新的对齐基准：随后的 refreshList 换新行时不该被当成冲突
-        baseline = snapOfRow(current);
+        const data = await putPuzzle(savingKey, body);
+        // 这次提交的内容就是新的对齐基准：随后的 refreshList 换新行时不该被当成冲突。
+        // 但期间已经切题（含 A → B → A）时不能写 —— 那会把 A 的提交值当成 B 的基准，
+        // 之后 B 的后台刷新会被误判成冲突、甚至覆盖 B 的编辑。
+        if (selectionAtSave === selectionGen) baseline = snapOfRow(current);
         ElMessage.success("题目主数据已保存");
         emit("saved", data?.puzzle ?? null);
     } catch (error) {

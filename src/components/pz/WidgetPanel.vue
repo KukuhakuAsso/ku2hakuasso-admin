@@ -4,7 +4,7 @@
 // 版本号由服务端分配并自动递增（1.0.0 → 1.0.1），前端不再填版本；
 // 发布后引用旧版本的题目会被自动改到新版本（这些题目的 page_rev 会 +1），
 // 每个组件只保留最新 ESM，Vue 源码留最近 3 版 —— 更早的源码不可再读取。
-import { computed, getCurrentScope, onScopeDispose, ref } from "vue";
+import { computed, getCurrentScope, onScopeDispose, ref, useId } from "vue";
 import { ElMessage } from "element-plus";
 import {
     compileWidget,
@@ -32,8 +32,9 @@ const NAME_RE = /^[a-z][a-z0-9-]{2,31}$/;
 const MAX_SOURCE_BYTES = 128 * 1024;
 
 // 与目录面板同理：全局列表，只要求「同一面板里最新一次生效」
-let panelSeed = 0;
-const abortKey = `pz-widgets#${++panelSeed}`;
+// 每个实例一个频道：`<script setup>` 里的计数器每个实例都会重置成 0，
+// 所有面板会同名共用一条频道、互相 abort。useId() 才能保证实例唯一。
+const abortKey = `pz-widgets#${useId()}`;
 if (getCurrentScope()) {
     onScopeDispose(() => cancelChannel(abortKey));
 }
