@@ -21,6 +21,11 @@ const asset = computed(() => props.malleable?.asset ?? null);
 
 // 用 render 函数挂自定义元素：props 走 DOM property 而不是 attribute，
 // 这样出题人配置的对象不会被序列化成字符串。
+//
+// 这里**故意不做** props 白名单：组件代码本身就是出题人写的任意 JS，
+// import() 已在管理端窗口里执行它了，过滤 innerHTML / on* 只是换个入口，
+// 挡不住任何真实风险却会拦住合法用法。唯一有效的边界是把整个组件执行
+// 搬进无凭证的沙箱（见 useAdminMalleableWidget 的说明）。
 const WidgetHost = {
     props: {
         tag: { type: String, required: true },

@@ -8,9 +8,7 @@
 //   * 撤销挂在 promise 上 —— 下载还没回来就释放时，等它回来再撤销。
 //     否则那个 blob URL 会变成没人持有也没人撤销的孤儿，内存直到标签页关闭才释放。
 import { computed, onBeforeUnmount, ref, unref, watch } from "vue";
-import { fetchWithAuth } from "@/api/http";
-import { extractErrorMessage } from "@/api/errors";
-import { resolveServerUrl } from "@/config/api";
+import { fetchResource } from "@/api/http";
 
 const cache = new Map();
 
@@ -86,23 +84,11 @@ function acquire(path, { fresh = false } = {}) {
 
     if (!record) {
         const promise = (async () => {
-            const response = await fetchWithAuth(resolveServerUrl(path), {
+            // 取字节、错误文案、429 语义都交给 fetchResource（取受保护字节的唯一入口）
+            const response = await fetchResource(path, {
                 accept: "*/*",
+                fallback: "素材加载失败",
             });
-            if (!response.ok) {
-                // 失败时是标准 JSON 错误体；429 额外带上等待秒数，其余直接用后端文案
-                const payload = await response.json().catch(() => null);
-                const waitSec =
-                    Number(payload?.error?.detail?.retry_after_sec) || 0;
-                throw new Error(
-                    response.status === 429 && waitSec > 0
-                        ? `请求过于频繁，请 ${waitSec} 秒后再试`
-                        : extractErrorMessage(
-                              payload,
-                              `素材加载失败（${response.status}）`,
-                          ),
-                );
-            }
             const blob = await response.blob();
             return URL.createObjectURL(blob);
         })();

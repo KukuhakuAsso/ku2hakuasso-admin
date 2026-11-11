@@ -314,29 +314,33 @@ export function requestLatest(abortKey, task) {
 // 所以必须先由 JS 取回再转 blob。path 可以是后端下发的 /api/admin/... 原始路径，
 // 这里统一经 resolveServerUrl() 换成本次构建的 API 前缀。
 //
-// 只处理 401 刷新重试一次；其余非 2xx 交给调用方（组件加载要区分 429 / 403 / 404）。
-export async function fetchResource(path, { accept = "*/*", retried = false } = {}) {
-    const headers = getApiHeaders({ Accept: accept });
-    const token = getToken();
-    if (token) headers.Authorization = `Bearer ${token}`;
-
-    const res = await fetch(resolveServerUrl(path), {
-        headers,
-        credentials: "include",
-    });
-
-    if (res.status === 401 && !retried) {
-        const refreshed = await refreshSession();
-        if (refreshed) return fetchResource(path, { accept, retried: true });
+// 信任边界与 fetchWithAuth 同一把尺子（按目标分流，而不是一律拒绝）：
+//   · 本端 API：带令牌 + Cookie，401 时刷新后重试一次；
+//   · 外联资源（外联素材 / 外联组件 ESM）：不带任何令牌与 Cookie，靠对方的 CORS 取回。
+//     组件那条仍要过 sha384 校验（由调用方负责），所以外链代码不会被无校验执行。
+//
+// 这里是「取受保护字节」的唯一入口：fetchMediaBlob 与 useProtectedMedia 都复用它，
+// 于是错误文案与 429 语义只有一份（后端文案 > 429 友好文案 > 调用方 fallback）。
+export async function fetchResource(path, { accept = "*/*", fallback = "" } = {}) {
+    const target = resolveServerUrl(path);
+    if (!target) {
+        throw new ApiError(400, "资源地址为空");
     }
+
+    const res = await fetchWithAuth(target, { headers: { Accept: accept } });
 
     if (!res.ok) {
         const payload = await res.json().catch(() => null);
-        throw new ApiError(
-            res.status,
-            extractErrorMessage(payload, `资源加载失败（${res.status}）`),
-            payload?.error,
-        );
+        // 429 的等待秒数是通用语义，收敛在这里，别让每个调用方各写一份
+        const waitSec = Number(payload?.error?.detail?.retry_after_sec) || 0;
+        const message =
+            res.status === 429 && waitSec > 0
+                ? `请求过于频繁，请 ${waitSec} 秒后再试`
+                : extractErrorMessage(
+                      payload,
+                      fallback || `资源加载失败（${res.status}）`,
+                  );
+        throw new ApiError(res.status, message, payload?.error);
     }
     return res;
 }
@@ -345,14 +349,22 @@ export async function fetchResource(path, { accept = "*/*", retried = false } = 
 // 邮件 / 求提示附件的 url 是受保护路径（`/api/msg/media/<id>`，会 302 到对象存储的短签名地址），
 // 响应体不是 JSON 信封，所以不能走 request()。这里复用同一套令牌与刷新逻辑：
 // 401 先刷新令牌再重试一次；只有指向本端 API 的地址才带令牌与 Cookie（信任边界）。
-// accept 由调用方指定：素材 / 组件 ESM 是二进制或脚本，不能收 application/json。
-export async function fetchWithAuth(url, { retried = false, accept = "" } = {}) {
+// options 与玩家端 request.js 的 fetchWithAuth 同形：`(url, options, { retried })`，
+// 调用方可以传 headers（素材是二进制、组件 ESM 是脚本，都要自己指定 Accept）。
+//
+// 已知未覆盖（PR #21 review 记录，决定不修）：本函数只校验**初始** URL，而 fetch 默认跟随重定向。
+// 若后端把某个素材 / 组件端点改成 302 到 CDN，浏览器会剥掉 Authorization，但**不会**剥掉
+// X-Mistarg-Test-Ticket。生产构建没有配置测试票据（getApiHeaders 不会加这个头），
+// 所以泄露面仅限 dev / test 构建。若将来后端改成 302，需要改为后端同源直传或在此处做 manual 探测。
+export async function fetchWithAuth(url, options = {}, { retried = false } = {}) {
+    const { headers: extraHeaders = {}, ...init } = options;
     const trusted = isApiUrl(url);
-    const headers = trusted ? getApiHeaders(accept ? { Accept: accept } : {}) : {};
+    const headers = trusted ? { ...getApiHeaders(), ...extraHeaders } : { ...extraHeaders };
     const token = trusted ? getToken() : null;
     if (token) headers.Authorization = `Bearer ${token}`;
 
     const response = await fetch(url, {
+        ...init,
         headers,
         credentials: trusted ? "include" : "omit",
     });
@@ -361,17 +373,12 @@ export async function fetchWithAuth(url, { retried = false, accept = "" } = {}) 
 
     const refreshed = await refreshSession();
     if (!refreshed) return response;
-    return fetchWithAuth(url, { retried: true, accept });
+    return fetchWithAuth(url, options, { retried: true });
 }
 
-// 取受保护图片：先按本端 API 前缀重写路径，再带令牌取字节，交给调用方转 blob URL。
-export async function fetchMediaBlob(rawUrl) {
-    const target = resolveServerUrl(rawUrl);
-    if (!target) throw new Error("图片地址为空");
-
-    const response = await fetchWithAuth(target);
-    if (!response.ok) {
-        throw new Error(`图片加载失败（${response.status}）`);
-    }
-    return response.blob();
-}
+// 取受保护图片：直接复用 fetchResource 的取字节与错误语义，只把结果转成 Blob。
+// 失败时同样优先显示后端文案，没有才退回「图片加载失败」。
+export const fetchMediaBlob = (rawUrl) =>
+    fetchResource(rawUrl, { accept: "*/*", fallback: "图片加载失败" }).then((res) =>
+        res.blob(),
+    );

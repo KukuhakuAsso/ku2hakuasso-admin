@@ -7,41 +7,41 @@ const API_ENVIRONMENT_STORAGE_KEY = "admin_api_environment";
 
 // 构建期由 VITE_* 环境变量注入的配置；testTicket 为空表示未配置测试环境，此时不允许切到 test。
 export const apiConfig = {
-    baseUrl: import.meta.env.VITE_API_BASE_URL || "",
-    basePath: import.meta.env.VITE_API_BASE_PATH || "/api-mist",
-    apiVersion: import.meta.env.VITE_API_VERSION || "mistarg.1.1.0",
-    tokenKey: import.meta.env.VITE_TOKEN_KEY || "admin_token",
-    devTicket: import.meta.env.VITE_DEV_TICKET || "",
-    testTicket: import.meta.env.VITE_X_MISTARG_TEST_TICKET || "",
+  baseUrl: import.meta.env.VITE_API_BASE_URL || "",
+  basePath: import.meta.env.VITE_API_BASE_PATH || "/api-mist",
+  apiVersion: import.meta.env.VITE_API_VERSION || "mistarg.1.1.0",
+  tokenKey: import.meta.env.VITE_TOKEN_KEY || "admin_token",
+  devTicket: import.meta.env.VITE_DEV_TICKET || "",
+  testTicket: import.meta.env.VITE_X_MISTARG_TEST_TICKET || "",
 };
 
 // 解析当前应使用的 API 环境：localStorage 里的用户选择优先，其次是 VITE_API_ENVIRONMENT；
 // 两条路径都要求存在测试票据，否则一律落在 production。
 function readApiEnvironment() {
-    const configuredEnvironment =
-        import.meta.env.VITE_API_ENVIRONMENT === "test" ? "test" : "production";
+  const configuredEnvironment =
+    import.meta.env.VITE_API_ENVIRONMENT === "test" ? "test" : "production";
 
-    if (typeof window === "undefined") {
-        return configuredEnvironment;
+  if (typeof window === "undefined") {
+    return configuredEnvironment;
+  }
+
+  try {
+    const savedEnvironment = window.localStorage.getItem(
+      API_ENVIRONMENT_STORAGE_KEY,
+    );
+    if (savedEnvironment === "test" && apiConfig.testTicket) {
+      return "test";
     }
-
-    try {
-        const savedEnvironment = window.localStorage.getItem(
-            API_ENVIRONMENT_STORAGE_KEY,
-        );
-        if (savedEnvironment === "test" && apiConfig.testTicket) {
-            return "test";
-        }
-        if (savedEnvironment === "production") {
-            return "production";
-        }
-    } catch (error) {
-        console.warn("[admin] 读取 API 环境设置失败", error);
+    if (savedEnvironment === "production") {
+      return "production";
     }
+  } catch (error) {
+    console.warn("[admin] 读取 API 环境设置失败", error);
+  }
 
-    return configuredEnvironment === "test" && apiConfig.testTicket
-        ? "test"
-        : "production";
+  return configuredEnvironment === "test" && apiConfig.testTicket
+    ? "test"
+    : "production";
 }
 
 // 当前生效的 API 环境（响应式，供界面显示与切换）。
@@ -49,39 +49,36 @@ export const apiEnvironment = ref(readApiEnvironment());
 
 // 切换 API 环境并持久化到 localStorage；环境名非法或缺少测试票据时抛错。
 export function setApiEnvironment(environment) {
-    if (!["test", "production"].includes(environment)) {
-        throw new Error("API 环境仅支持测试环境或正式环境。");
-    }
+  if (!["test", "production"].includes(environment)) {
+    throw new Error("API 环境仅支持测试环境或正式环境。");
+  }
 
-    if (environment === "test" && !apiConfig.testTicket) {
-        throw new Error("未配置测试票据，无法切换到测试环境。");
-    }
+  if (environment === "test" && !apiConfig.testTicket) {
+    throw new Error("未配置测试票据，无法切换到测试环境。");
+  }
 
-    apiEnvironment.value = environment;
-    if (typeof window !== "undefined") {
-        try {
-            window.localStorage.setItem(
-                API_ENVIRONMENT_STORAGE_KEY,
-                environment,
-            );
-        } catch (error) {
-            console.warn("[admin] 保存 API 环境设置失败", error);
-        }
+  apiEnvironment.value = environment;
+  if (typeof window !== "undefined") {
+    try {
+      window.localStorage.setItem(API_ENVIRONMENT_STORAGE_KEY, environment);
+    } catch (error) {
+      console.warn("[admin] 保存 API 环境设置失败", error);
     }
+  }
 }
 
 // 拼接完整请求地址：baseUrl + basePath + path（baseUrl 为绝对 URL 时同样适用）。
 export function buildApiUrl(path) {
-    const normalized = String(path ?? "/").trim();
-    const safePath = normalized.startsWith("/") ? normalized : `/${normalized}`;
-    const base = (apiConfig.baseUrl || "").replace(/\/+$/, "");
-    const prefix = (apiConfig.basePath || "").replace(/\/+$/, "");
-    return `${base}${prefix}${safePath}`;
+  const normalized = String(path ?? "/").trim();
+  const safePath = normalized.startsWith("/") ? normalized : `/${normalized}`;
+  const base = (apiConfig.baseUrl || "").replace(/\/+$/, "");
+  const prefix = (apiConfig.basePath || "").replace(/\/+$/, "");
+  return `${base}${prefix}${safePath}`;
 }
 
 function apiOrigin() {
-    if (typeof window === "undefined") return "";
-    return window.location.origin;
+  if (typeof window === "undefined") return "";
+  return window.location.origin;
 }
 
 // 后端下发的资源地址（预览里的封面 / 附件 / 组件 ESM 形如 /api/admin/pz/media/17，
@@ -90,49 +87,47 @@ function apiOrigin() {
 // 都必须先换成当前构建的 API 前缀，否则会打到不存在的端点。
 // 外链与 blob:/data: 原样返回（也不给它带凭证，见 isApiUrl）。
 export function resolveServerUrl(path) {
-    const raw = String(path ?? "").trim();
-    if (!raw) return "";
-    if (/^(?:https?:)?\/\//i.test(raw) || /^(?:blob|data):/i.test(raw)) {
-        return raw;
-    }
-    if (raw.startsWith("/api/")) {
-        return buildApiUrl(raw.slice("/api".length));
-    }
+  const raw = String(path ?? "").trim();
+  if (!raw) return "";
+  if (/^(?:https?:)?\/\//i.test(raw) || /^(?:blob|data):/i.test(raw)) {
     return raw;
+  }
+  if (raw.startsWith("/api/")) {
+    return buildApiUrl(raw.slice("/api".length));
+  }
+  return raw;
 }
 
 // 信任边界：只有指向本端 API 的地址才带令牌与 Cookie。
 export function isApiUrl(raw) {
-    const path = String(raw || "").trim();
-    if (!path) return false;
-    if (!/^(?:https?:)?\/\//i.test(path) && !path.startsWith("/")) return false;
+  const path = String(raw || "").trim();
+  if (!path) return false;
+  if (!/^(?:https?:)?\/\//i.test(path) && !path.startsWith("/")) return false;
 
-    let parsed;
-    try {
-        parsed = new URL(path, apiOrigin() || "http://localhost");
-    } catch {
-        return false;
-    }
-    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return false;
-    if (apiOrigin() && parsed.origin !== apiOrigin()) return false;
+  let parsed;
+  try {
+    parsed = new URL(path, apiOrigin() || "http://localhost");
+  } catch {
+    return false;
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return false;
+  if (apiOrigin() && parsed.origin !== apiOrigin()) return false;
 
-    const prefix = (apiConfig.basePath || "/api").replace(/\/+$/, "");
-    return (
-        parsed.pathname === prefix || parsed.pathname.startsWith(`${prefix}/`)
-    );
+  const prefix = (apiConfig.basePath || "/api").replace(/\/+$/, "");
+  return parsed.pathname === prefix || parsed.pathname.startsWith(`${prefix}/`);
 }
 
 // 生成通用请求头；处于测试环境且配置了测试票据时，额外带上 X-Mistarg-Test-Ticket。
 export function getApiHeaders(extra = {}) {
-    const headers = {
-        Accept: "application/json",
-        "Content-Type": "application/json",
-        "X-API-Version": apiConfig.apiVersion,
-        ...extra,
-    };
-    if (apiEnvironment.value === "test" && apiConfig.testTicket) {
-        headers["X-Mistarg-Test-Ticket"] = apiConfig.testTicket;
-    }
+  const headers = {
+    Accept: "application/json",
+    "Content-Type": "application/json",
+    "X-API-Version": apiConfig.apiVersion,
+    ...extra,
+  };
+  if (apiEnvironment.value === "test" && apiConfig.testTicket) {
+    headers["X-Mistarg-Test-Ticket"] = apiConfig.testTicket;
+  }
 
-    return headers;
+  return headers;
 }
