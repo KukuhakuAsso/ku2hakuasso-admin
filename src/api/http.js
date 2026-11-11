@@ -363,6 +363,10 @@ export async function fetchWithAuth(url, options = {}, { retried = false } = {})
     const token = trusted ? getToken() : null;
     if (token) headers.Authorization = `Bearer ${token}`;
 
+    // 代次要在**发出前**记下：A 会话发出的素材 / 组件请求在 B 登录之后才 401 时，
+    // 不能被当成当前会话的请求（那会用 B 的令牌重放旧地址，还会白白轮换一次 B 的刷新令牌）。
+    const generation = sessionGeneration;
+
     const response = await fetch(url, {
         ...init,
         headers,
@@ -370,6 +374,9 @@ export async function fetchWithAuth(url, options = {}, { retried = false } = {})
     });
 
     if (!trusted || response.status !== 401 || retried) return response;
+
+    // 旧会话的 401：说明不了当前会话，原样返回给调用方（不刷新、不重试）
+    if (generation !== sessionGeneration) return response;
 
     const refreshed = await refreshSession();
     if (!refreshed) return response;
