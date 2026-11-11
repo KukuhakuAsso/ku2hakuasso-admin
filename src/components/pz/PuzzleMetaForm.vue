@@ -5,12 +5,14 @@
 //   PUT /admin/puzzles/:key   → title, ord, archive_id, tips_reward, enabled, answer, author_id（admin）
 // 2026-11-05 起按出题人隔离：staff 只看到/只改得了自己的题；answer 只对作者本人或 admin 返回。
 // PUT 不回显答案，所以保存后用列表重取一次来校准（由出题台负责）。
-import { computed, reactive, ref, watch } from "vue";
+import { computed, nextTick, reactive, ref, watch } from "vue";
 import { ElMessage } from "element-plus";
 import { putPuzzle } from "@/api/pz";
 import { listAuthorCandidates } from "@/api/accounts";
 import { pick } from "@/utils/format";
 import { describeApiError } from "@/api/errors";
+import PageMergeDialog from "@/components/pz/PageMergeDialog.vue";
+import { META_ROW_ACTION, decideMetaRow } from "./metaMerge.js";
 
 const props = defineProps({
     // GET /admin/puzzles 的列表项
@@ -32,6 +34,20 @@ const canReadAnswer = computed(
         props.row != null &&
         Object.prototype.hasOwnProperty.call(props.row, "answer"),
 );
+
+// 参与比对 / 合并的字段：看不到的字段不参与，也不提交
+const metaFields = computed(() => {
+    const list = [
+        { key: "title", label: "标题" },
+        { key: "ord", label: "排序" },
+        { key: "tipsReward", label: "提示点奖励" },
+        { key: "archiveId", label: "归档 ID" },
+        { key: "enabled", label: "启用" },
+    ];
+    if (canReadAnswer.value) list.push({ key: "answer", label: "答案" });
+    if (props.canAssignAuthor) list.push({ key: "authorId", label: "出题人" });
+    return list;
+});
 
 const form = reactive({
     title: "",
@@ -82,14 +98,149 @@ function toForm(row) {
     };
 }
 
-// 回填：换题（row 变化）时重置，避免把上一题的改动带到下一题
-watch(
-    () => props.row,
-    (row) => {
-        Object.assign(form, toForm(row));
-    },
-    { immediate: true },
-);
+// 与服务端「已对齐」的字段快照：既用来判断表单脏没脏，也作为三方合并的 base。
+let appliedKey = "";
+let baseline = null;
+let prompting = false;
+let closing = false;
+let pendingRow = null;
+let queuedRow = null;
+
+const mergeOpen = ref(false);
+const mergeRev = ref(0);
+const mergeBase = ref(null);
+const mergeLocal = ref(null);
+const mergeRemote = ref(null);
+
+// 两侧都过一遍 toForm：它负责类型归一（数字、null、布尔），
+// 保证「表单里的值」和「列表行里的值」用同一把尺子比较。
+function snapOfRow(row) {
+    const out = {};
+    const normalized = toForm(row);
+    for (const field of metaFields.value) out[field.key] = normalized[field.key] ?? null;
+    return out;
+}
+
+function snapOfForm() {
+    return snapOfRow({
+        title: form.title,
+        ord: form.ord,
+        tipsReward: form.tipsReward,
+        archiveId: form.archiveId,
+        enabled: form.enabled,
+        answer: form.answer,
+        authorId: form.authorId,
+    });
+}
+
+function applyRow(row) {
+    Object.assign(form, toForm(row));
+    appliedKey = row?.key ?? "";
+    baseline = row ? snapOfRow(row) : null;
+}
+
+// 行变了要区分三件事：换题 / 后台刷新 / 服务端也改了
+//   换题          → 直接回填
+//   表单干净      → 直接回填（保存后的重取也走这里，后端会补默认值）
+//   只有本地改过  → 不动草稿，只把基准推进到这次的服务端内容
+//   两边都改了    → 打开三方合并弹窗
+function handleRow(row) {
+    if (prompting || closing) {
+        queuedRow = row;
+        return;
+    }
+    if (!row) {
+        applyRow(null);
+        return;
+    }
+
+    const local = snapOfForm();
+    const remote = snapOfRow(row);
+    const action = decideMetaRow({
+        appliedKey,
+        rowKey: row.key,
+        local,
+        remote,
+        baseline,
+    });
+
+    if (action === META_ROW_ACTION.APPLY) {
+        applyRow(row);
+        return;
+    }
+    if (action === META_ROW_ACTION.REBASE) {
+        appliedKey = row.key;
+        baseline = remote;
+        return;
+    }
+
+    prompting = true;
+    pendingRow = row;
+    mergeRev.value = Number(row.rev) || 0;
+    mergeBase.value = baseline ? { ...baseline } : null;
+    mergeLocal.value = local;
+    mergeRemote.value = remote;
+    mergeOpen.value = true;
+}
+
+function onMergeApply({ mode, payload }) {
+    const row = pendingRow;
+    pendingRow = null;
+    // 本组件是 mergeOpen 的唯一控制者：先关窗，排队的行等关闭动画结束后再处理
+    mergeOpen.value = false;
+    prompting = false;
+    closing = true;
+
+    if (row) {
+        if (mode === "remote") {
+            applyRow(row);
+        } else if (mode === "merge") {
+            Object.assign(form, payload ?? {});
+            appliedKey = row.key;
+            baseline = snapOfRow(row);
+        } else {
+            // 保留我的修改：草稿不动，但基准要推进到这次看到的服务端内容，
+            // 否则下一轮同一处服务端改动会被当成「仅服务端改过」而反复弹窗
+            appliedKey = row.key;
+            baseline = snapOfRow(row);
+        }
+    }
+}
+
+function onMergeClosed() {
+    closing = false;
+    // 兜底：万一有非 footer 的路径把弹窗关掉，别把 prompting 卡在 true
+    if (prompting) {
+        prompting = false;
+        pendingRow = null;
+    }
+    const next = queuedRow;
+    queuedRow = null;
+    if (!next) return;
+    // Element Plus 先 emit closed 再写回 modelValue：等这次更新落地再开新弹窗
+    nextTick(() => handleRow(next));
+}
+
+function readMetaField(payload, key) {
+    return payload?.[key] ?? null;
+}
+
+function formatMetaField(value, row) {
+    if (row.key === "enabled") return value ? "启用" : "停用";
+    if (row.key === "archiveId") return value == null ? "不归档" : `#${value}`;
+    if (row.key === "answer") return value ? String(value) : "（未设置）";
+    if (row.key === "authorId") {
+        if (value == null) return "（未指派）";
+        const hit = authorOptions.value.find((item) => item.id === Number(value));
+        return hit?.label ? `${hit.label}` : `账号 #${value}`;
+    }
+    return String(value ?? "");
+}
+
+const buildMetaResult = (values) => values;
+
+// 回填：换题直接重置；同一题的后台刷新按「表单干不干净」决定应用还是弹合并
+watch(() => props.row, handleRow, { immediate: true });
 
 const key = computed(() => pick(props.row, "key") ?? "");
 
@@ -209,6 +360,8 @@ async function save() {
     saving.value = true;
     try {
         const data = await putPuzzle(key.value, body);
+        // 这次提交的内容就是新的对齐基准：随后的 refreshList 换新行时不该被当成冲突
+        baseline = snapOfRow(current);
         ElMessage.success("题目主数据已保存");
         emit("saved", data?.puzzle ?? null);
     } catch (error) {
@@ -334,6 +487,21 @@ async function save() {
                 <span v-if="readonly" class="tip inline">修改题目主数据需要 admin 权限</span>
             </el-form-item>
         </el-form>
+
+        <!-- 服务端更新 + 本地还有未保存修改：复用页面的三方合并弹窗 -->
+        <PageMergeDialog
+            v-model="mergeOpen"
+            :rev="mergeRev"
+            :base="mergeBase"
+            :local="mergeLocal"
+            :remote="mergeRemote"
+            :fields="metaFields"
+            :read-field="readMetaField"
+            :format-field="formatMetaField"
+            :build-result="buildMetaResult"
+            @apply="onMergeApply"
+            @closed="onMergeClosed"
+        />
     </div>
 </template>
 

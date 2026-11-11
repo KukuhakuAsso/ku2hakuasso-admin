@@ -128,7 +128,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, reactive, ref, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 import { ElMessage } from "element-plus";
 import { getProgressMatrix } from "@/api/progress";
 import { listPuzzles } from "@/api/pz";
@@ -139,6 +139,7 @@ import {
     statusMeta,
 } from "@/utils/format";
 import { describeApiError } from "@/api/errors";
+import { isStaleRequest, requestLatest, cancelChannel } from "@/api/http";
 import PageNav from "@/components/PageNav.vue";
 
 // 状态取值见 api-9-admin.md：matrix 缺省按「只看正常队伍（2）」处理，
@@ -233,6 +234,11 @@ function parseTeamId() {
     return Number.isInteger(parsed) && parsed > 0 ? parsed : NaN;
 }
 
+// 同一频道只让最后一次请求生效（见 api/http 的 requestLatest）：
+// 重置 / 改每页条数都可能在旧请求还在飞的时候再发一次，
+// 晚到的旧响应会覆盖分页与数据，还会提前把 loading 关掉、弹一条已过期请求的错误。
+const MATRIX_CHANNEL = "progress-matrix";
+
 async function load(target = page.value) {
     const teamId = parseTeamId();
     if (Number.isNaN(teamId)) {
@@ -241,16 +247,23 @@ async function load(target = page.value) {
     }
 
     loading.value = true;
+    // 被更新的一次取代：不要碰任何界面状态，loading 交给那一次去收尾
+    let superseded = false;
     try {
-        const data = await getProgressMatrix({
-            status: filters.status,
-            puzzle_key: filters.puzzle_key || undefined,
-            team_id: teamId ?? undefined,
-            sort: filters.sort,
-            order: filters.order,
-            page: target,
-            limit: limit.value,
-        });
+        const data = await requestLatest(MATRIX_CHANNEL, ({ signal }) =>
+            getProgressMatrix(
+                {
+                    status: filters.status,
+                    puzzle_key: filters.puzzle_key || undefined,
+                    team_id: teamId ?? undefined,
+                    sort: filters.sort,
+                    order: filters.order,
+                    page: target,
+                    limit: limit.value,
+                },
+                { signal },
+            ),
+        );
         // 列顺序即题目顺序（ord），各队横向对照的才是同一序列
         puzzles.value = [...(data?.puzzles || [])].sort(
             (a, b) =>
@@ -263,11 +276,15 @@ async function load(target = page.value) {
         total.value = data?.total ?? teams.value.length;
         hasMore.value = !!data?.hasMore;
     } catch (err) {
+        if (isStaleRequest(err)) {
+            superseded = true;
+            return;
+        }
         ElMessage.error(
             describeApiError(err, { forbidden: "通过矩阵仅 admin 可查看" }),
         );
     } finally {
-        loading.value = false;
+        if (!superseded) loading.value = false;
     }
 }
 
@@ -337,6 +354,9 @@ onMounted(() => {
     loadPuzzleOptions();
     load(1);
 });
+
+// 离开页面时中断还在飞的请求，别让它的响应落到已卸载的视图上
+onBeforeUnmount(() => cancelChannel(MATRIX_CHANNEL));
 </script>
 
 <style scoped>
