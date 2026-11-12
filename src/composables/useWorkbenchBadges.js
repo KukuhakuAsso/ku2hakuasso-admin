@@ -1,23 +1,23 @@
-// 用户信工作台的角标（站内信 / 提示 / 申诉三路待办数）。
+// 站内信工作台的角标（提示 / 申诉两个工作台已并入本页，侧栏只剩一个数）。
 //
-// 2026-11-12 起前两路改用工单计数（一次请求拿到两路，且是精确值）：
-//   · 站内信：GET /admin/msg/tickets/summary → byKind.mail.open   （open = pending + processing）
-//   · 提示：  同上                                        → byKind.hint.open
-//   · 申诉：  GET /admin/appeals?state=awaiting&limit=50 → items.length + hasMore（仍有上限）
+// 2026-11-12 起前两路改用工单计数，现在合并成一路：
+//   · 站内信（含求提示）：GET /admin/msg/tickets/summary
+//        → byKind.mail.pending + byKind.mail.mine + byKind.hint.pending + byKind.hint.mine
+//   · 申诉：GET /admin/appeals?state=awaiting&limit=50 → items.length + hasMore（仍有上限）
 //
-// 选 open（待处理栏总数）而不是「分给我的 + 没人接的」，是为了让角标反映**积压**：
-// 处理中的工单也是「还没办完」，不显示会让人以为清空了。要改成只看自己的，
-// 把下面两处 byKind.*.open 换成 pending + mine 即可。
+// 只数「该我干的」：还没人接手的（pending）+ 我处理中的（mine，含我接手的求提示）。
+// 别人手上处理中的不进角标 —— 那不是我的待办，算进来角标永远清不掉。
+//（打开详情即接单，所以自己接手的不会让数字凭空变小，办结 / 强制退回才会变。）
 //
-// 用 summary 的另一个好处：不再受「列表只读第一页」限制（原来提示角标会漏掉
-// quoted 第二页里的待回应降价申请）。申诉那一路仍是列表计数，拉满一页显示「50+」。
-// 三路都是「有权限才请求」，失败一律静默——角标出错不该弹提示，也不该把上一次的数字清零。
+// 用 summary 的另一个好处：不再受「列表只读第一页」限制。申诉那一路仍是列表计数，
+// 拉满一页显示「50+」。两路都是「有权限才请求」，失败一律静默——角标出错不该弹提示，
+// 也不该把上一次的数字清零。
 //
 // 单例状态：侧栏只有一个，多组件读同一份。切账号时由 reset() 清空。
 //
-// 除了 60s 轮询，工作台页面里的动作会让对应那一路的待办数立刻变化
-//（读信 / 报价 / 拒绝 / 降价 / 回复申诉 / 解封 ……），动作成功后调
-// refreshMails / refreshHints / refreshAppeals 只重拉那一路，不必等下一轮轮询。
+// 除了 60s 轮询，工作台页面里的动作会让待办数立刻变化
+//（回复 / 报价 / 降价 / 拒绝 / 回复申诉 / 解封 ……），动作成功后调
+// refreshMails / refreshAppeals 只重拉那一路，不必等下一轮轮询。
 import { computed, reactive } from "vue";
 import { getTicketSummary } from "@/api/msg";
 import { listAppeals } from "@/api/moderation";
@@ -30,16 +30,14 @@ const POLL_INTERVAL_MS = 60000;
 const state = reactive({
     mails: 0,
     mailsCapped: false,
-    hints: 0,
-    hintsCapped: false,
     appeals: 0,
     appealsCapped: false,
     loaded: false,
 });
 
 // 每路各一个序号：迟到的响应靠它判断自己是否已被更新的请求（或 reset）作废。
-// 分路而不是共用一个，避免「读了一封邮件」把正在飞行的提示/申诉响应一起作废。
-const seq = { mails: 0, hints: 0, appeals: 0 };
+// 分路而不是共用一个，避免「读了一封邮件」把正在飞行的申诉响应一起作废。
+const seq = { mails: 0, appeals: 0 };
 
 let timer = null;
 let accessGetter = null;
@@ -55,39 +53,39 @@ function fmt(value, capped) {
 }
 
 const badges = computed(() => {
-    const total = state.mails + state.hints + state.appeals;
-    const totalCapped = state.mailsCapped || state.hintsCapped || state.appealsCapped;
+    const total = state.mails + state.appeals;
+    const totalCapped = state.mailsCapped || state.appealsCapped;
     return {
         mails: state.mails,
-        hints: state.hints,
         appeals: state.appeals,
         total,
         mailsBadge: fmt(state.mails, state.mailsCapped),
-        hintsBadge: fmt(state.hints, state.hintsCapped),
         appealsBadge: fmt(state.appeals, state.appealsCapped),
         // 只要有一路被截断，合计就只能是「至少这么多」
         totalBadge: fmt(total, totalCapped),
     };
 });
 
-// 站内信 + 提示两路的工单计数：一次 summary 同时喂两路（按权限决定写哪几路）。
+// 单路待办数：还没人接手的（pending）+ 我处理中的（mine）。
+// byKind.* 与顶层 summary 同形，这两项都直接取。
+function ticketTodo(stats) {
+    const pending = Number(stats?.pending ?? 0) || 0;
+    const mine = Number(stats?.mine ?? 0) || 0;
+    return pending + mine;
+}
+
+// 站内信 + 求提示的工单计数：一次 summary 一起算（提示请求也是工单，合并后同一个角标）。
 // 计数是精确值，因此 Capped 恒为 false —— 不再有「50+」这种近似。
-async function loadTickets(wantMail, wantHint) {
-    const myMail = ++seq.mails;
-    const myHint = ++seq.hints;
+async function loadTickets() {
+    const my = ++seq.mails;
     try {
         const data = await getTicketSummary();
         // 期间发生过 zero()（重置 / 权限变化）或又发起了新一轮：整体丢弃
-        if (myMail !== seq.mails || myHint !== seq.hints) return;
+        if (my !== seq.mails) return;
 
-        if (wantMail) {
-            state.mails = Number(data?.byKind?.mail?.open ?? 0) || 0;
-            state.mailsCapped = false;
-        }
-        if (wantHint) {
-            state.hints = Number(data?.byKind?.hint?.open ?? 0) || 0;
-            state.hintsCapped = false;
-        }
+        state.mails =
+            ticketTodo(data?.byKind?.mail) + ticketTodo(data?.byKind?.hint);
+        state.mailsCapped = false;
     } catch {
         // 静默：保留上一次的值
     }
@@ -109,18 +107,12 @@ async function loadAppeals() {
     }
 }
 
-// access: { mails, hints, appeals } —— 没权限的那路直接归零，不发请求
+// access: { mails, appeals } —— 没权限的那路直接归零，不发请求
 async function refresh(access = {}) {
-    const wantMail = Boolean(access.mails);
-    const wantHint = Boolean(access.hints);
     const jobs = [];
 
-    if (wantMail || wantHint) {
-        jobs.push(loadTickets(wantMail, wantHint));
-    } else {
-        zero("mails");
-        zero("hints");
-    }
+    if (access.mails) jobs.push(loadTickets());
+    else zero("mails");
 
     if (access.appeals) jobs.push(loadAppeals());
     else zero("appeals");
@@ -129,8 +121,8 @@ async function refresh(access = {}) {
     state.loaded = true;
 }
 
-// 工作台页面里的动作改变了某一路的待办数后调用：只重拉那一路。
-// 站内信与提示共用同一次 summary，任一动作都会顺带刷新两路（同一次请求，无额外开销）。
+// 工作台页面里的动作改变了待办数后调用：只重拉那一路。
+// 站内信与提示合并后共用同一次 summary，任一动作都走 mails 这一路。
 // 没有那一路权限时不发请求（否则会拿一个自己看不到的数字去显示角标）。
 function refreshKind(kind) {
     const access = accessGetter?.() ?? {};
@@ -139,9 +131,9 @@ function refreshKind(kind) {
         if (!access.appeals) return Promise.resolve();
         return loadAppeals();
     }
-    if (kind !== "mails" && kind !== "hints") return Promise.resolve();
-    if (!access.mails && !access.hints) return Promise.resolve();
-    return loadTickets(Boolean(access.mails), Boolean(access.hints));
+    if (kind !== "mails") return Promise.resolve();
+    if (!access.mails) return Promise.resolve();
+    return loadTickets();
 }
 
 // 轮询每次触发：页面隐藏时不请求（省流量），切回前台由 visibilitychange 补一次
@@ -181,7 +173,7 @@ function startPolling(getter) {
 // 登出 / 切账号：清空数字并作废在途请求
 function reset() {
     stopPolling();
-    for (const kind of ["mails", "hints", "appeals"]) zero(kind);
+    for (const kind of ["mails", "appeals"]) zero(kind);
     state.loaded = false;
 }
 
@@ -191,7 +183,6 @@ export function useWorkbenchBadges() {
         state,
         refresh,
         refreshMails: () => refreshKind("mails"),
-        refreshHints: () => refreshKind("hints"),
         refreshAppeals: () => refreshKind("appeals"),
         startPolling,
         stopPolling,

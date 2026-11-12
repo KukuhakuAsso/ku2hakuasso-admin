@@ -82,11 +82,15 @@ export const grantPermissionGroup = (id, groupCode) =>
 export const revokePermissionGroup = (id, groupCode) =>
     del(`/admin/accounts/${id}/permissions/${groupCode}`);
 
-// ---------- 提示工作台（两步报价，2026-10-14 起） ----------
+// ---------- 求提示（两步报价，2026-10-14 起；2026-11-12 起并入站内信工作台） ----------
 // 旧 POST /admin/msg/hint/:id/reply 已删除：答复必须与报价一起提交，
 // 只落服务端 draft_reply，玩家确认扣费后才作为消息送达（见 api-10-tips.md §10.8–§10.10）。
+// 动作（quote / requote / decline-cheaper / reject）现在由站内信抽屉的提示面板发起，
+// :id 取邮件详情内联的 `hint.requestId`（后端未下发时面板只显示说明、不给动作）。
 
-// 工作台列表：status 默认 pending（待报价队列），另支持 quoted / answered / rejected / closed / all。
+// 列表 / 详情：合并后前端不再单独调用，保留字段口径（与 `mail.hint` 同形），
+// 便于后端联调与将来做「只看待报价」的独立视图。
+// 列表：status 默认 pending（待报价队列），另支持 quoted / answered / rejected / closed / all。
 // 2026-11-12 起元素新增 ticket / ticketStatus 与两个邮件 id（questionMailId / cheaperMailId），
 // 并支持 ticket_status / ticket_overdue 过滤；被他人持有时隐藏 question / draftReply / attachments。
 // 求提示工单与站内信工作台共享同一行，两边的 ticket_id 是同一个。

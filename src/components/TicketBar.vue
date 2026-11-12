@@ -20,6 +20,8 @@ const props = defineProps({
     // 顶层 ticketStatus 的兜底（threaded 行 / 详情返回里可能只有它）
     ticketStatus: { type: String, default: "" },
     canRelease: { type: Boolean, default: false },
+    // 强制退回（admin 退他人工单）：只改按钮文案与配色，判定仍由调用方给
+    forceRelease: { type: Boolean, default: false },
     busy: { type: Boolean, default: false },
 });
 
@@ -75,13 +77,17 @@ const ageText = computed(() => {
         <el-button
             v-if="canRelease"
             link
-            type="primary"
+            :type="forceRelease ? 'danger' : 'primary'"
             size="small"
             :loading="busy"
-            title="把工单退回待处理，其他同事可接手；待处理计时不会重置"
+            :title="
+                forceRelease
+                    ? '强制退回他人工单：原处理人会被解除占用，其他同事可接手'
+                    : '把工单退回待处理，其他同事可接手；待处理计时不会重置'
+            "
             @click="emit('release')"
         >
-            退出 / 标记未处理
+            {{ forceRelease ? "强制退回" : "退出 / 标记未处理" }}
         </el-button>
     </div>
 </template>

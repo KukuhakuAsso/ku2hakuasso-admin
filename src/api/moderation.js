@@ -22,8 +22,9 @@ export const listMutes = (params) => get("/admin/mutes", params);
 // 解封仍走 /admin/players/:id/unban、/admin/teams/:id/unban（见 api/players.js、api/teams.js）
 export const listBanneds = (params) => get("/admin/banneds", params);
 
-// ---------- 申诉工作台 ----------
-// kind=ban|mute|all（可见范围由权限决定）、state=awaiting|all、cursor、limit≤50
+// ---------- 申诉（2026-11-12 起并入站内信工作台） ----------
+// 列表：kind=ban|mute|all（可见范围由权限决定）、state=awaiting|all、cursor、limit≤50。
+// 合并后前端只用它算侧栏角标（等官方反馈数）；回复 / 解禁用邮件详情内联的 `appeal` 快照。
 export const listAppeals = (params) => get("/admin/appeals", params);
 
 // 回复申诉：targetType=account|team，targetId 是账号 id 或队伍 id（不是邮件 id）。

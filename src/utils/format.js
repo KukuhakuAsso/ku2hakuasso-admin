@@ -60,7 +60,7 @@ export const TEAM_STATUS_OPTIONS = [
     { value: 1, label: "已解散" },
 ];
 
-// 提示工作台状态（两步报价：pending 待报价 → quoted 已报价 → answered 已答复）
+// 求提示状态（两步报价：pending 待报价 → quoted 已报价 → answered 已答复）
 export const HINT_STATUS = {
     pending: { label: "待报价", type: "warning" },
     quoted: { label: "已报价", type: "primary" },
@@ -79,7 +79,7 @@ export const MAIL_SOURCE = {
     system: { label: "系统消息", type: "info" },
     // 2026-10-17 起：官方通知（notify 发送）与管理级内部公告之外的通知类邮件
     notice: { label: "官方通知", type: "info" },
-    // 处罚申诉链：封禁 / 禁言的往来邮件（也出现在申诉工作台里）
+    // 处罚申诉链：封禁 / 禁言的往来邮件（在站内信工作台里按申诉面板处理）
     appeal_ban: { label: "封禁申诉", type: "danger" },
     appeal_mute: { label: "禁言申诉", type: "warning" },
 };

@@ -17,7 +17,7 @@
             <el-descriptions-item label="闲置衰减(%)">{{ rule.idle_decay_pct ?? 0 }}</el-descriptions-item>
           </el-descriptions>
           <div class="hint rule-note">
-            人工提示价格由「提示工作台」逐条报价，不再有全局单价。
+            人工提示价格在「站内信工作台」的求提示邮件里逐条报价，不再有全局单价。
           </div>
         </el-card>
       </el-col>

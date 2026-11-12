@@ -158,6 +158,20 @@
           >
             退出
           </el-button>
+          <!-- admin：他人工单可强制退回（回复仍需先自己接手） -->
+          <el-button
+            v-else-if="
+              rowTicketStatus(row) === 'processing' && canForceReleaseRow(row)
+            "
+            size="small"
+            type="danger"
+            plain
+            :loading="rowBusy === `${row.mailId}:release`"
+            title="强制退回他人工单：原处理人会被解除占用，其他同事可接手"
+            @click.stop="releaseRow(row)"
+          >
+            强制退回
+          </el-button>
           <el-button size="small" text type="primary" @click.stop="openMail(row)">
             查看
           </el-button>
@@ -198,6 +212,7 @@
           :ticket="ticket"
           :ticket-status="drawerTicketStatus"
           :can-release="canReleaseCurrent"
+          :force-release="forcingRelease"
           :busy="releasing"
           @release="releaseCurrentTicket"
         />
@@ -235,7 +250,20 @@
         </template>
       </div>
       <template #footer>
-        <div class="reply-bar">
+        <!-- 求提示 / 申诉的邮件不再走普通回复：动作在各自面板里（原两个工作台并入这里） -->
+        <HintActionPanel
+          v-if="isHintMail"
+          :hint="mail?.hint ?? null"
+          :ticket-id="ticket?.ticketId ?? null"
+          @done="onSourceActionDone"
+          @conflict="onSourceConflict"
+        />
+        <AppealActionPanel
+          v-else-if="isAppealMail && mail?.appeal"
+          :appeal="mail.appeal"
+          @done="onSourceActionDone"
+        />
+        <div v-else class="reply-bar">
           <p v-if="!canReply" class="tip">{{ replyBlockedReason }}</p>
           <template v-else>
             <el-input
@@ -287,6 +315,8 @@ import {
 import PageNav from "@/components/PageNav.vue";
 import AttachmentGallery from "@/components/AttachmentGallery.vue";
 import TicketBar from "@/components/TicketBar.vue";
+import HintActionPanel from "@/components/msg/HintActionPanel.vue";
+import AppealActionPanel from "@/components/msg/AppealActionPanel.vue";
 import {
   fmtTime,
   isTicketMine,
@@ -305,7 +335,7 @@ const POLL_INTERVAL_MS = 180000;
 let pollTimer = null;
 
 const auth = useAuthStore();
-const { refreshMails } = useWorkbenchBadges();
+const { refreshMails, refreshAppeals } = useWorkbenchBadges();
 
 const route = useRoute();
 const channel = ref(
@@ -398,6 +428,17 @@ function stopPolling() {
   }
 }
 
+// ---- 邮件来源决定抽屉底部用哪个动作面板（提示 / 申诉已并入本页）----
+// 求提示邮件不能走普通回复（后端 403），必须在提示面板里报价 / 答复；
+// 申诉邮件优先用申诉面板（回复要经 appeal 接口才会解锁下一条申诉），
+// 后端还没下发 appeal 快照时回退到普通回复框，免得完全没法回。
+const isHintMail = computed(() => mail.value?.source === "hint");
+const isAppealMail = computed(
+  () =>
+    mail.value?.source === "appeal_ban" ||
+    mail.value?.source === "appeal_mute",
+);
+
 // ---- 工单派生状态 ----
 // 详情返回里可能只有顶层 ticketStatus、没有 ticket 对象（或反之），两者都认
 const drawerTicketStatus = computed(
@@ -405,18 +446,21 @@ const drawerTicketStatus = computed(
 );
 // 我是不是这条工单的处理人
 const heldByMe = computed(() => isTicketMine(ticket.value, auth.account));
-// 工单被其他 staff 持有时（processing 且不是我）才算不可操作；
-// pending 时允许操作（提交时后端要求先 claim，sendReply 会自动补一次）
-const blockedByTicket = computed(() => {
+// 未办结的工单只有持单人能动手：
+//   · 被其他 staff 持有 → 只读
+//   · 还没人接手（admin 的 GET 只读、不会自动接单）→ 也先挡住，否则写完回复才被后端 409 打回
+const blockedByTicket = computed(
+  () => isTicketOpen(ticket.value) && !heldByMe.value,
+);
+// 「退出 / 标记未处理」：处理中且归我；admin 可以强制退回他人的工单
+//（后端 release 支持，按钮文案会变成「强制退回」以免误认成普通释放）
+const canReleaseCurrent = computed(() => {
   const current = ticket.value;
-  if (!isTicketOpen(current)) return false;
-  if (heldByMe.value) return false;
-  return current.status === "processing";
+  if (current?.status !== "processing" || !current.ticketId) return false;
+  return heldByMe.value || auth.isAdmin;
 });
-// 只有处理中且归我（或 admin 强制退回他人）才出现「退出」；
-// admin 打开别人的工单时先不给强制退回入口，避免误操作
-const canReleaseCurrent = computed(
-  () => ticket.value?.status === "processing" && heldByMe.value,
+const forcingRelease = computed(
+  () => canReleaseCurrent.value && !heldByMe.value,
 );
 
 // 公告只读；求提示邮件必须走报价流程；工单被他人持有时也不能回复
@@ -429,12 +473,17 @@ const canReply = computed(() => {
 });
 
 const replyBlockedReason = computed(() => {
+  if (heldByOther.value) {
+    return `该工单已被 ${heldByOther.value} 接手，正文与附件不可见。`;
+  }
   if (!mail.value) return "邮件未加载。";
   if (mail.value.source === "hint") {
-    return "求提示邮件请在「提示工作台」报价 / 答复，不能直接回复。";
+    return "求提示邮件请用底部的「提示」面板报价 / 答复，不能直接回复。";
   }
   if (blockedByTicket.value) {
-    return "该工单已被其他 staff 接手，无法回复。";
+    return ticket.value?.status === "pending"
+      ? "该工单还没有人接手：请先在列表点「接手」后再回复。"
+      : "该工单已被其他 staff 接手，无法回复。";
   }
   return "这封邮件不可回复（官方公告只读，或当前账号没有 msg.feedback.handle 权限）。";
 });
@@ -442,6 +491,12 @@ const replyBlockedReason = computed(() => {
 // ---- 列表行的工单派生 ----
 const rowTicketStatus = (row) => row?.ticketStatus || row?.ticket?.status || "";
 const isMine = (row) => isTicketMine(row?.ticket, auth.account);
+// admin 可以强制退回他人工单（回复仍要先自己接手）
+const canForceReleaseRow = (row) =>
+  auth.isAdmin && Boolean(row?.ticket?.ticketId) && !isMine(row);
+// 列表里某一封对应的工单：403 快照缺 ticketId 时用它补齐，admin 才能在抽屉里强制退回
+const listTicketFor = (mailId) =>
+  list.value.find((item) => item.mailId === mailId)?.ticket ?? null;
 const isOverdueRow = (row) =>
   Boolean(
     row?.ticket?.overdue ||
@@ -486,6 +541,8 @@ async function loadMessages() {
     mail.value = data?.mail || null;
     // 工单：这封自己的 ticket 优先，会话级 threadTicket 兜底（2.0 起详情就返回这两个）
     ticket.value = data?.mail?.ticket ?? data?.threadTicket ?? null;
+    // staff 打开详情时后端已经顺手接单：把结果同步回列表，界面不要还停在「待处理」
+    syncViewedTicket(ticket.value);
     // 渲染顺序：mail（当前打开这封，时间最新）在前，replyChain 按服务端顺序
     //（时间倒序，最新祖先在前、链尾是根）跟在后面——旧信息排在时间新的正文之后。
     const chain = Array.isArray(data?.replyChain) ? data.replyChain : [];
@@ -508,7 +565,10 @@ async function loadMessages() {
       heldByOther.value = descriptor.holder;
       mail.value = null;
       messages.value = [];
-      ticket.value = descriptor.ticket ?? { status: "processing" };
+      ticket.value = {
+        ...(listTicketFor(drawer.mailId) || {}),
+        ...(descriptor.ticket || { status: "processing" }),
+      };
       return;
     }
 
@@ -531,8 +591,6 @@ async function markActiveRead(mailId) {
         item.unread = 0;
       }
     }
-    // 侧栏「站内信工作台」角标数的是未读邮件，读掉一封就立刻重拉
-    void refreshMails();
   } catch {
     // 标记失败不打扰操作员：正文已经打开了，下次刷新会重新对齐未读状态
   }
@@ -546,8 +604,8 @@ function senderName(msg) {
 }
 
 // 回复：先把「点发送这一刻」的目标与工单固定下来，之后即使切走也不受影响。
-// 工单未办结时必须带 ticket_id；后端还会要求由持单人执行 ——
-// 所以遇到 TICKET_NOT_CLAIMED 时自动 claim 一次再重试（admin 打开 pending 工单就是这种情况）。
+// 工单未办结时必须带 ticket_id；持单人由「打开详情即接单」确定（后端在 GET 里完成），
+// 所以这里不再补 claim —— 真正没接单时（如 admin 只读浏览）后端会 409，按错误提示接手即可。
 async function sendReply() {
   if (!canReply.value || !drawer.content.trim()) return;
 
@@ -560,19 +618,7 @@ async function sendReply() {
 
   drawer.sending = true;
   try {
-    let data;
-    try {
-      data = await replyMail(targetId, body);
-    } catch (err) {
-      const descriptor = describeTicketError(err);
-      if (descriptor?.action !== TICKET_ERROR_ACTION.CLAIM || !activeTicket) {
-        throw err;
-      }
-      // 没接单：先接单再重试一次（写操作幂等性由后端保证，reply 未落库才会到这里）
-      const claimed = await claimTicketQuietly(activeTicket.ticketId);
-      if (!claimed.ok) throw err;
-      data = await replyMail(targetId, body);
-    }
+    const data = await replyMail(targetId, body);
 
     ElMessage.success("已回复");
     // 回复会办结工单：用响应里的 ticketId / ticketStatus 更新状态条（不一致时以重取为准）
@@ -587,6 +633,8 @@ async function sendReply() {
     }
     first().catch((err) => ElMessage.error(extractErrorMessage(err)));
     refreshTicketSummary();
+    // 回复即办结工单：侧栏角标（待处理 + 我处理中）要立刻减一，不等下一轮轮询
+    void refreshMails();
   } catch (err) {
     const descriptor = describeTicketError(err);
     if (descriptor?.action === TICKET_ERROR_ACTION.RELOAD) {
@@ -605,12 +653,35 @@ async function sendReply() {
   }
 }
 
+// 提示 / 申诉面板动作完成：工单可能推进（报价、拒绝都会改状态），
+// 角标与分栏计数跟着动，并再拉一次详情拿最新的报价 / 申诉快照。
+function onSourceActionDone(data) {
+  if (data?.ticketStatus && ticket.value?.ticketId === data.ticketId) {
+    ticket.value = { ...ticket.value, status: data.ticketStatus };
+  }
+  // 角标：来信 / 求提示走工单计数，申诉走「等官方反馈」列表，两路都要重拉
+  void refreshMails();
+  void refreshAppeals();
+  refreshTicketSummary();
+  void loadMessages();
+}
+
+// 面板遇到工单冲突（被别人接走 / 工单已变化）：提示已经由面板弹过，这里只兜底刷新
+function onSourceConflict() {
+  first().catch(() => {});
+  refreshTicketSummary();
+  void loadMessages();
+}
+
 // 退出 / 标记未处理：把工单退回待处理，其他同事可接手。
+// admin 可以强制退回他人工单（原处理人会被解除占用），回复仍需先自己接手。
 // 注意待处理计时不重置（超时仍按最初来信时间算），提示里要说明。
 async function releaseCurrentTicket() {
   const active = ticket.value;
   if (!active?.ticketId || releasing.value) return;
 
+  const forced = !heldByMe.value;
+  const holder = ticketAssigneeName(active);
   releasing.value = true;
   try {
     const result = await releaseTicketQuietly(active.ticketId);
@@ -630,9 +701,15 @@ async function releaseCurrentTicket() {
       status: "pending",
       assignee: null,
     };
-    ElMessage.success("已释放该工单，其他同事可接手（待处理计时不重置）");
+    ElMessage.success(
+      forced
+        ? `已强制退回该工单（原处理人 ${holder || "staff"}），其他同事可接手（待处理计时不重置）`
+        : "已释放该工单，其他同事可接手（待处理计时不重置）",
+    );
     first().catch(() => {});
     refreshTicketSummary();
+    // 强制退回后重新拉一次详情：被占用时只看到占位，现在正文可以读了
+    if (forced) void loadMessages();
   } finally {
     releasing.value = false;
   }
@@ -646,6 +723,20 @@ function patchRowTicket(row, ticket) {
   if (!ticket) return;
   row.ticket = ticket;
   row.ticketStatus = ticket.status;
+}
+
+// 打开详情即占位接单（后端在 GET 里完成，admin 只读）：把服务端算好的工单同步到列表行，
+// 否则抽屉里已是「处理中 · 我」，背后那一行还挂着「接手」按钮（同一工单的多行一起改）。
+function syncViewedTicket(current) {
+  if (!current?.ticketId) return;
+  let changed = false;
+  for (const item of list.value) {
+    if (item.ticket?.ticketId !== current.ticketId) continue;
+    patchRowTicket(item, current);
+    changed = true;
+  }
+  // 待处理 → 处理中会改变分栏计数（待处理 -1 / 处理中 +1 / 我处理中 +1）
+  if (changed) refreshTicketSummary();
 }
 
 // 接手：pending → processing（幂等；被别人抢先 → 409 TICKET_CLAIMED）
@@ -676,11 +767,13 @@ async function claimRow(row) {
   }
 }
 
-// 退出：processing → pending（只有处理人本人能退；计时不重置）
+// 退出：processing → pending（处理人本人；admin 可强制退回他人工单；计时都不重置）
 async function releaseRow(row) {
   const ticketId = row.ticket?.ticketId;
   if (!ticketId || rowBusy.value) return;
 
+  const forced = !isMine(row);
+  const holder = ticketAssigneeName(row.ticket);
   const key = `${row.mailId}:release`;
   rowBusy.value = key;
   try {
@@ -698,7 +791,11 @@ async function releaseRow(row) {
       row,
       result.ticket ?? { ...row.ticket, status: "pending", assignee: null },
     );
-    ElMessage.success("已释放该工单，其他同事可接手（待处理计时不重置）");
+    ElMessage.success(
+      forced
+        ? `已强制退回该工单（原处理人 ${holder || "staff"}），其他同事可接手`
+        : "已释放该工单，其他同事可接手（待处理计时不重置）",
+    );
     refreshTicketSummary();
   } finally {
     rowBusy.value = "";
@@ -712,7 +809,7 @@ onMounted(() => {
   openMailFromQuery();
 });
 
-// ?mailId=：从求提示工作台的「提问邮件 / 议价邮件」跳过来时，直接打开那封
+// ?mailId=：外部带邮件 id 跳过来时（如从处罚记录 / 通知里的深链），直接打开那封
 function openMailFromQuery() {
   const mailId = Number(route.query.mailId);
   if (!Number.isFinite(mailId) || mailId <= 0) return;

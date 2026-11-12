@@ -3,7 +3,7 @@
 //
 // 服务端给的 `url` 是受保护路径 `/api/msg/media/<id>`：`<img src>` 直接写会 401，
 // 必须带令牌 fetch → blob → objectURL。管理端不发图（官方不发图，见接口约定），
-// 只负责在邮件详情 / 求提示工作台 / 申诉工作台把玩家上传的截图显示出来。
+// 只负责在邮件详情（含并入的求提示 / 申诉邮件）把玩家上传的截图显示出来。
 import { onBeforeUnmount, ref, watch } from "vue";
 import { ElImageViewer } from "element-plus";
 import { fetchMediaBlob } from "@/api/http";
