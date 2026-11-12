@@ -142,9 +142,12 @@ const canUserLetters = computed(
 const { badges, refresh: refreshBadges, startPolling, stopPolling, reset: resetBadges } =
     useWorkbenchBadges();
 
-// 每一路都按权限决定是否请求：没权限的项不仅不显示角标，也不该发请求（会 403）
+// 每一路都按权限决定是否请求：没权限的项不仅不显示角标，也不该发请求（会 403）。
+// 站内信/提示两路的数字来自 tickets/summary，按工单类型分权限：
+//   普通来信工单要 msg.feedback.handle、求提示工单要 msg.hint.handle（admin 由 can() 直通）。
+// 只有公告权限的 staff 两路都是 0，侧栏入口仍在（公告频道只读）。
 const badgeAccess = computed(() => ({
-    mails: canMsgWorkbench.value,
+    mails: auth.can("msg.feedback.handle"),
     hints: auth.can("msg.hint.handle"),
     appeals: canHandleAppeals.value,
 }));

@@ -3,6 +3,7 @@
 // 与站点其它子项目保持一致；登录态为 Bearer access_token。
 import { apiConfig, buildApiUrl, getApiHeaders, isApiUrl, resolveServerUrl } from "@/config/api";
 import { extractErrorMessage } from "@/api/errors";
+import { ElMessage } from "element-plus";
 
 export class ApiError extends Error {
     constructor(status, message, detail) {
@@ -120,6 +121,22 @@ export function refreshSession() {
     return refreshing;
 }
 
+// 版本不匹配（426）：前后端契约变更必须同批发布，旧前端会被后端直接拒绝。
+// 这是「部署版本对不上」而不是用户操作出错 —— 全局只提示一次，
+// 否则一屏并发请求会各弹一条，把真正的信息淹没。
+let versionMismatchNotified = false;
+
+function notifyVersionMismatch(message) {
+    if (versionMismatchNotified) return;
+    versionMismatchNotified = true;
+    // 后端给的是「客户端 X / 服务端 Y」这类可读文案，优先原样展示；
+    // 没有时退回本地的通用提示。
+    ElMessage.warning(message || "后台已更新，请刷新页面后再操作");
+    if (typeof window !== "undefined") {
+        window.dispatchEvent(new window.CustomEvent("admin:version-mismatch"));
+    }
+}
+
 // 请求所属的会话已被替换（登出 / 换账号）：只让这次请求失败，不触碰新会话
 function staleSessionError(json) {
     return new ApiError(
@@ -193,6 +210,8 @@ export async function request(path, { method = "GET", body, retried = false, sig
 
     if (!res.ok || (json && json.ok === false)) {
         const detail = json?.error || {};
+        // 426：后端版本比前端新（minor 契约变更要求同批发布），提示刷新一次即可
+        if (res.status === 426) notifyVersionMismatch(detail.message);
         throw new ApiError(
             res.status,
             detail.message || `请求失败（${res.status}）`,

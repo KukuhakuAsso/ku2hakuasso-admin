@@ -1,13 +1,16 @@
 // 用户信工作台的角标（站内信 / 提示 / 申诉三路待办数）。
 //
-// 后端没有「待办总数」接口，只能按列表数：
-//   · 站内信：GET /admin/msg/mails?only_unread=true&limit=50 → items.length + hasMore
-//   · 提示：  GET /admin/msg/hint-requests 两个状态各拉一页
-//              status=pending → 待报价
-//              status=quoted  → 其中 cheaperRequestedAt 非空且 cheaperDecidedAt 为空 = 待回应降价
-//   · 申诉：  GET /admin/appeals?state=awaiting&limit=50 → items.length + hasMore
+// 2026-11-12 起前两路改用工单计数（一次请求拿到两路，且是精确值）：
+//   · 站内信：GET /admin/msg/tickets/summary → byKind.mail.open   （open = pending + processing）
+//   · 提示：  同上                                        → byKind.hint.open
+//   · 申诉：  GET /admin/appeals?state=awaiting&limit=50 → items.length + hasMore（仍有上限）
 //
-// 因此数字是有上限的：拉满一页且 hasMore 时显示「50+ / 100+」而不是继续翻页。
+// 选 open（待处理栏总数）而不是「分给我的 + 没人接的」，是为了让角标反映**积压**：
+// 处理中的工单也是「还没办完」，不显示会让人以为清空了。要改成只看自己的，
+// 把下面两处 byKind.*.open 换成 pending + mine 即可。
+//
+// 用 summary 的另一个好处：不再受「列表只读第一页」限制（原来提示角标会漏掉
+// quoted 第二页里的待回应降价申请）。申诉那一路仍是列表计数，拉满一页显示「50+」。
 // 三路都是「有权限才请求」，失败一律静默——角标出错不该弹提示，也不该把上一次的数字清零。
 //
 // 单例状态：侧栏只有一个，多组件读同一份。切账号时由 reset() 清空。
@@ -16,16 +19,12 @@
 //（读信 / 报价 / 拒绝 / 降价 / 回复申诉 / 解封 ……），动作成功后调
 // refreshMails / refreshHints / refreshAppeals 只重拉那一路，不必等下一轮轮询。
 import { computed, reactive } from "vue";
-import { listHintRequests, listMails } from "@/api/msg";
+import { getTicketSummary } from "@/api/msg";
 import { listAppeals } from "@/api/moderation";
-import { countHintTodos, formatBadge } from "@/utils/workbenchBadge";
+import { formatBadge } from "@/utils/workbenchBadge";
 
-// 每路最多数多少条（接口上限分别是 50 / 100 / 50）
-const LIMITS = {
-    mails: 50,
-    hints: 100,
-    appeals: 50,
-};
+// 申诉只能按列表数（接口上限 50）
+const APPEALS_LIMIT = 50;
 const POLL_INTERVAL_MS = 60000;
 
 const state = reactive({
@@ -71,39 +70,26 @@ const badges = computed(() => {
     };
 });
 
-async function loadMails() {
-    const my = ++seq.mails;
+// 站内信 + 提示两路的工单计数：一次 summary 同时喂两路（按权限决定写哪几路）。
+// 计数是精确值，因此 Capped 恒为 false —— 不再有「50+」这种近似。
+async function loadTickets(wantMail, wantHint) {
+    const myMail = ++seq.mails;
+    const myHint = ++seq.hints;
     try {
-        const data = await listMails({
-            only_unread: true,
-            limit: LIMITS.mails,
-        });
-        if (my !== seq.mails) return;
-        const items = Array.isArray(data?.items) ? data.items : [];
-        state.mails = items.length;
-        state.mailsCapped = Boolean(data?.hasMore);
+        const data = await getTicketSummary();
+        // 期间发生过 zero()（重置 / 权限变化）或又发起了新一轮：整体丢弃
+        if (myMail !== seq.mails || myHint !== seq.hints) return;
+
+        if (wantMail) {
+            state.mails = Number(data?.byKind?.mail?.open ?? 0) || 0;
+            state.mailsCapped = false;
+        }
+        if (wantHint) {
+            state.hints = Number(data?.byKind?.hint?.open ?? 0) || 0;
+            state.hintsCapped = false;
+        }
     } catch {
         // 静默：保留上一次的值
-    }
-}
-
-async function loadHints() {
-    const my = ++seq.hints;
-    try {
-        const [pending, quoted] = await Promise.all([
-            listHintRequests({ status: "pending", limit: LIMITS.hints }),
-            listHintRequests({ status: "quoted", limit: LIMITS.hints }),
-        ]);
-        if (my !== seq.hints) return;
-
-        const pendingItems = Array.isArray(pending?.items) ? pending.items : [];
-        const quotedItems = Array.isArray(quoted?.items) ? quoted.items : [];
-
-        // 待报价 + 玩家申请了更便宜但官方还没回应：两类都算「等我处理」
-        state.hints = countHintTodos(pendingItems, quotedItems);
-        state.hintsCapped = Boolean(pending?.hasMore || quoted?.hasMore);
-    } catch {
-        // 静默
     }
 }
 
@@ -112,7 +98,7 @@ async function loadAppeals() {
     try {
         const data = await listAppeals({
             state: "awaiting",
-            limit: LIMITS.appeals,
+            limit: APPEALS_LIMIT,
         });
         if (my !== seq.appeals) return;
         const items = Array.isArray(data?.items) ? data.items : [];
@@ -123,34 +109,39 @@ async function loadAppeals() {
     }
 }
 
-const LOADERS = {
-    mails: loadMails,
-    hints: loadHints,
-    appeals: loadAppeals,
-};
-
 // access: { mails, hints, appeals } —— 没权限的那路直接归零，不发请求
 async function refresh(access = {}) {
+    const wantMail = Boolean(access.mails);
+    const wantHint = Boolean(access.hints);
     const jobs = [];
-    for (const kind of Object.keys(LOADERS)) {
-        if (access[kind]) {
-            jobs.push(LOADERS[kind]());
-        } else {
-            zero(kind);
-        }
+
+    if (wantMail || wantHint) {
+        jobs.push(loadTickets(wantMail, wantHint));
+    } else {
+        zero("mails");
+        zero("hints");
     }
+
+    if (access.appeals) jobs.push(loadAppeals());
+    else zero("appeals");
+
     await Promise.allSettled(jobs);
     state.loaded = true;
 }
 
 // 工作台页面里的动作改变了某一路的待办数后调用：只重拉那一路。
+// 站内信与提示共用同一次 summary，任一动作都会顺带刷新两路（同一次请求，无额外开销）。
 // 没有那一路权限时不发请求（否则会拿一个自己看不到的数字去显示角标）。
 function refreshKind(kind) {
-    const loader = LOADERS[kind];
-    if (!loader) return Promise.resolve();
-    const access = accessGetter?.();
-    if (access && !access[kind]) return Promise.resolve();
-    return loader();
+    const access = accessGetter?.() ?? {};
+
+    if (kind === "appeals") {
+        if (!access.appeals) return Promise.resolve();
+        return loadAppeals();
+    }
+    if (kind !== "mails" && kind !== "hints") return Promise.resolve();
+    if (!access.mails && !access.hints) return Promise.resolve();
+    return loadTickets(Boolean(access.mails), Boolean(access.hints));
 }
 
 // 轮询每次触发：页面隐藏时不请求（省流量），切回前台由 visibilitychange 补一次
@@ -190,7 +181,7 @@ function startPolling(getter) {
 // 登出 / 切账号：清空数字并作废在途请求
 function reset() {
     stopPolling();
-    for (const kind of Object.keys(LOADERS)) zero(kind);
+    for (const kind of ["mails", "hints", "appeals"]) zero(kind);
     state.loaded = false;
 }
 

@@ -42,11 +42,16 @@ const routes = [
             path: "messages",
             name: "letters-messages",
             component: () => import("@/views/msg/MsgThreadsView.vue"),
+            // 普通来信 / 反馈 / 通知回信需 msg.feedback.handle；只有公告权限的 staff
+            // 仍要能看公告频道（口径与侧栏入口一致，见 canMsgWorkbench）
+            meta: { requiresMailWorkbench: true },
           },
           {
             path: "hints",
             name: "letters-hints",
             component: () => import("@/views/hint/HintRequestsView.vue"),
+            // 求提示工作台：staff + msg.hint.handle（admin 直通）
+            meta: { requiresHintHandle: true },
           },
           {
             // 申诉工作台：封禁申诉仅 admin，禁言申诉需 moderation.mute
@@ -170,6 +175,14 @@ router.beforeEach((to) => {
   }
   // 申诉工作台：admin 可看全部，staff 需 moderation.mute（只有禁言申诉）
   if (to.meta.requiresMute && !canHandleAppeals(auth)) return "/dashboard";
+  // 站内信工作台：普通来信需 msg.feedback.handle；只有公告权限的 staff 仍可进（公告频道只读）
+  if (to.meta.requiresMailWorkbench && !canOpenMailWorkbench(auth)) {
+    return "/dashboard";
+  }
+  // 提示工作台：需 msg.hint.handle（admin 直通）
+  if (to.meta.requiresHintHandle && !auth.can("msg.hint.handle")) {
+    return "/dashboard";
+  }
   // 处罚记录：封禁列表仅 admin；禁言列表需 moderation.mute
   if (
     to.meta.requiresMuteOrBan &&
@@ -183,6 +196,16 @@ router.beforeEach((to) => {
 
 function canHandleAppeals(auth) {
   return auth.isAdmin || auth.can("moderation.mute");
+}
+
+// 站内信工作台的口径与侧栏入口保持一致：处理来信要 msg.feedback.handle，
+// 只有公告权限的 staff 仍然需要进这个页面看公告频道（只读）。
+function canOpenMailWorkbench(auth) {
+  return (
+    auth.isAdmin ||
+    auth.can("msg.feedback.handle") ||
+    auth.can("msg.announce.publish")
+  );
 }
 
 function canEditPuzzleContent(auth) {

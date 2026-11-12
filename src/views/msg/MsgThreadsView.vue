@@ -1,6 +1,32 @@
 <template>
   <div class="page-card">
     <div class="filter-bar">
+      <!-- 工单式工作台：默认只看「待处理栏」（open = pending + processing） -->
+      <el-select
+        v-model="ticketStatus"
+        style="width: 200px"
+        @change="first"
+      >
+        <el-option
+          v-for="item in TICKET_FILTER_OPTIONS"
+          :key="item.value"
+          :label="item.label"
+          :value="item.value"
+        />
+      </el-select>
+      <el-select
+        v-model="ticketAssignee"
+        style="width: 140px"
+        @change="first"
+      >
+        <el-option
+          v-for="item in TICKET_ASSIGNEE_OPTIONS"
+          :key="item.value"
+          :label="item.label"
+          :value="item.value"
+        />
+      </el-select>
+      <el-checkbox v-model="ticketOverdue" @change="first">只看超时</el-checkbox>
       <el-select v-model="channel" style="width: 180px" @change="first">
         <el-option
           v-for="item in MAIL_CHANNEL_OPTIONS"
@@ -13,6 +39,17 @@
       <el-button type="primary" :disabled="loading" @click="first"
         >刷新</el-button
       >
+      <span v-if="ticketSummary" class="summary-line">
+        待处理 {{ ticketSummary.pending }} · 处理中
+        {{ ticketSummary.processing }} · 超时
+        {{
+          (ticketSummary.pendingOverdue ?? 0) +
+          (ticketSummary.processingOverdue ?? 0)
+        }}
+        <template v-if="ticketSummary.mine">
+          · 我处理中 {{ ticketSummary.mine }}
+        </template>
+      </span>
     </div>
 
     <el-table
@@ -25,17 +62,24 @@
       <el-table-column prop="mailId" label="邮件ID" width="90" />
       <el-table-column label="主题" min-width="240">
         <template #default="{ row }">
-          <span :style="{ fontWeight: row.unread > 0 ? 600 : 400 }">
-            {{ row.subject || "（无主题）" }}
-          </span>
-          <el-tag
-            v-if="row.replyCount"
-            size="small"
-            type="info"
-            class="reply-count"
-          >
-            {{ row.replyCount }} 条回复
-          </el-tag>
+          <div class="subject-cell">
+            <span :style="{ fontWeight: row.unread > 0 ? 600 : 400 }">
+              <span v-if="isMine(row)" class="mine-flag">我的</span>
+              {{ row.subject || "（无主题）" }}
+            </span>
+            <el-tag
+              v-if="row.replyCount"
+              size="small"
+              type="info"
+              class="reply-count"
+            >
+              {{ row.replyCount }} 条回复
+            </el-tag>
+            <p v-if="row.snippet" class="snippet">{{ row.snippet }}</p>
+            <p v-else-if="isSnippetHidden(row)" class="hidden-tip">
+              其他 staff 处理中，摘要已隐藏
+            </p>
+          </div>
         </template>
       </el-table-column>
       <el-table-column label="来源" width="110">
@@ -43,6 +87,23 @@
           <el-tag size="small" :type="statusMeta(row.source, MAIL_SOURCE).type">
             {{ statusMeta(row.source, MAIL_SOURCE).label }}
           </el-tag>
+        </template>
+      </el-table-column>
+      <el-table-column label="工单" width="150">
+        <template #default="{ row }">
+          <div v-if="rowTicketStatus(row)" class="ticket-cell">
+            <el-tag
+              size="small"
+              :type="statusMeta(rowTicketStatus(row), TICKET_STATUS).type"
+            >
+              {{ statusMeta(rowTicketStatus(row), TICKET_STATUS).label }}
+            </el-tag>
+            <span v-if="isOverdueRow(row)" class="overdue-flag">超时</span>
+            <span class="ticket-assignee">
+              {{ ticketAssigneeName(row.ticket) || "未接手" }}
+            </span>
+          </div>
+          <span v-else>—</span>
         </template>
       </el-table-column>
       <el-table-column label="频道" width="150">
@@ -75,9 +136,31 @@
           {{ fmtTime(row.lastReplyAt || row.createdAt) }}
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="90" fixed="right">
-        <template #default>
-          <el-button size="small" text type="primary">查看</el-button>
+      <el-table-column label="操作" width="170" fixed="right">
+        <template #default="{ row }">
+          <!-- pending：可以在列表里直接占位（不必先打开详情） -->
+          <el-button
+            v-if="rowTicketStatus(row) === 'pending'"
+            size="small"
+            type="primary"
+            :loading="rowBusy === `${row.mailId}:claim`"
+            @click.stop="claimRow(row)"
+          >
+            接手
+          </el-button>
+          <!-- 处理中且归我：可以直接退回待处理 -->
+          <el-button
+            v-else-if="rowTicketStatus(row) === 'processing' && isMine(row)"
+            size="small"
+            :loading="rowBusy === `${row.mailId}:release`"
+            title="把工单退回待处理；待处理计时不会重置"
+            @click.stop="releaseRow(row)"
+          >
+            退出
+          </el-button>
+          <el-button size="small" text type="primary" @click.stop="openMail(row)">
+            查看
+          </el-button>
         </template>
       </el-table-column>
     </el-table>
@@ -111,8 +194,25 @@
           <span>{{ statusMeta(mail?.source, MAIL_SOURCE).label }}</span>
         </div>
 
+        <TicketBar
+          :ticket="ticket"
+          :ticket-status="drawerTicketStatus"
+          :can-release="canReleaseCurrent"
+          :busy="releasing"
+          @release="releaseCurrentTicket"
+        />
+
         <div v-if="drawer.loading" class="loading">
           <el-skeleton :rows="6" animated />
+        </div>
+        <div v-else-if="heldByOther" class="held-placeholder">
+          <el-empty
+            :description="`该工单已被 ${heldByOther} 接手，正文与附件不可见`"
+          />
+          <p class="tip">
+            其他 staff 正在处理这条会话。需要协助时，请让对方点「退出 /
+            标记未处理」，或由 admin 强制退回后再查看。
+          </p>
         </div>
         <template v-else>
           <div v-if="!messages.length" class="empty">
@@ -136,10 +236,7 @@
       </div>
       <template #footer>
         <div class="reply-bar">
-          <p v-if="!canReply" class="tip">
-            这封邮件不可回复（官方公告只读，或当前账号没有 msg.feedback.handle
-            权限）。
-          </p>
+          <p v-if="!canReply" class="tip">{{ replyBlockedReason }}</p>
           <template v-else>
             <el-input
               v-model="drawer.content"
@@ -168,24 +265,43 @@
 </template>
 
 <script setup>
-import { computed, onBeforeUnmount, onMounted, reactive, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 import { ElMessage } from "element-plus";
 import { useRoute } from "vue-router";
 import { useAuthStore } from "@/stores/auth";
-import { listMails, getMail, replyMail, markMailRead } from "@/api/msg";
+import {
+  getMail,
+  getTicketSummary,
+  listMails,
+  markMailRead,
+  replyMail,
+} from "@/api/msg";
 import { useCursorPage } from "@/composables/useCursorPage";
 import { useWorkbenchBadges } from "@/composables/useWorkbenchBadges";
+import {
+  TICKET_ERROR_ACTION,
+  claimTicketQuietly,
+  describeTicketError,
+  releaseTicketQuietly,
+} from "@/composables/useTicketActions";
 import PageNav from "@/components/PageNav.vue";
 import AttachmentGallery from "@/components/AttachmentGallery.vue";
+import TicketBar from "@/components/TicketBar.vue";
 import {
   fmtTime,
+  isTicketMine,
+  isTicketOpen,
   MAIL_CHANNEL_OPTIONS,
   MAIL_SOURCE,
   statusMeta,
+  TICKET_ASSIGNEE_OPTIONS,
+  TICKET_FILTER_OPTIONS,
+  TICKET_STATUS,
+  ticketAssigneeName,
 } from "@/utils/format";
 import { extractErrorMessage } from "@/api/errors";
 
-const POLL_INTERVAL_MS = 10000;
+const POLL_INTERVAL_MS = 180000;
 let pollTimer = null;
 
 const auth = useAuthStore();
@@ -199,6 +315,13 @@ const channel = ref(
 );
 const onlyUnread = ref(false);
 
+// ---- 工单筛选（迁移 0041）：默认只看「待处理栏」----
+const ticketStatus = ref("open");
+const ticketAssignee = ref("all");
+const ticketOverdue = ref(false);
+// 分栏计数：待处理 / 处理中 / 超时 / 我处理中。轮询只刷它，不动列表。
+const ticketSummary = ref(null);
+
 // 列队用邮件式接口：每条记录一行，倒序游标分页
 const fetcher = (cursor) =>
   listMails({
@@ -206,6 +329,13 @@ const fetcher = (cursor) =>
     limit: 20,
     channel: channel.value || undefined,
     only_unread: onlyUnread.value || undefined,
+    ticket_status: ticketStatus.value || undefined,
+    // all 与默认等价，不必显式发送
+    ticket_assignee:
+      ticketAssignee.value && ticketAssignee.value !== "all"
+        ? ticketAssignee.value
+        : undefined,
+    ticket_overdue: ticketOverdue.value ? 1 : undefined,
   });
 const { list, page, hasMore, loading, first, next, prev } =
   useCursorPage(fetcher);
@@ -220,6 +350,11 @@ const drawer = reactive({
 });
 const mail = ref(null);
 const messages = ref([]);
+// 当前详情对应的工单：详情接口返回 mail.ticket（没有时用 threadTicket 兜底）
+const ticket = ref(null);
+// 被其他 staff 持有时后端返回 403（TICKET_HELD_BY_OTHER）：只记处理人名，正文不显示
+const heldByOther = ref("");
+const releasing = ref(false);
 
 // 详情请求的序号：只接受「最新一次请求且仍是同一封邮件」的响应，
 // 避免切到 B 之后 A 的迟到响应、或手动刷新的旧响应覆盖界面
@@ -227,20 +362,33 @@ let detailSeq = 0;
 
 function startPolling() {
   stopPolling();
+  // 每 3 分钟自动刷新一次（手动「刷新」随时可用）：
   pollTimer = setInterval(() => {
-    // 抽屉打开时一律不刷新：操作员正在读对话 / 写回复，界面不该自己变
+    // 分栏计数每轮都刷（不打扰阅读，也不改动列表）
+    refreshTicketSummary();
+
+    // 抽屉打开时一律不刷新列表：操作员正在读对话 / 写回复，界面不该自己变
     //（自动替换 mail + replyChain 会让人读一半内容跳掉）。关掉抽屉后下一轮自动继续。
     // 抽屉里的「刷新」按钮仍然可以手动拉最新。
     if (drawer.visible) return;
 
     // 列表：只在第一页自动刷新。first() 会把游标栈与页码重置到第 1 页，
-    // 操作员正在翻旧邮件时不能被每 10 秒拽回最新页；请求进行中也跳过，避免叠加。
+    // 操作员正在翻旧邮件时不能被自动刷新拽回最新页；请求进行中也跳过，避免叠加。
     if (page.value === 1 && !loading.value) {
       first().catch(() => {
         // 轮询失败不打扰操作员，下一轮会再试
       });
     }
   }, POLL_INTERVAL_MS);
+}
+
+// 工单计数：失败静默（角标/分栏只是辅助信息，不该弹错）
+async function refreshTicketSummary() {
+  try {
+    ticketSummary.value = await getTicketSummary();
+  } catch {
+    // 保持上一次的数字
+  }
 }
 
 function stopPolling() {
@@ -250,10 +398,59 @@ function stopPolling() {
   }
 }
 
-// 公告只读；回复还需要 msg.feedback.handle 权限
-const canReply = computed(
-  () => Boolean(mail.value?.canReply) && auth.can("msg.feedback.handle"),
+// ---- 工单派生状态 ----
+// 详情返回里可能只有顶层 ticketStatus、没有 ticket 对象（或反之），两者都认
+const drawerTicketStatus = computed(
+  () => ticket.value?.status || mail.value?.ticket?.status || "",
 );
+// 我是不是这条工单的处理人
+const heldByMe = computed(() => isTicketMine(ticket.value, auth.account));
+// 工单被其他 staff 持有时（processing 且不是我）才算不可操作；
+// pending 时允许操作（提交时后端要求先 claim，sendReply 会自动补一次）
+const blockedByTicket = computed(() => {
+  const current = ticket.value;
+  if (!isTicketOpen(current)) return false;
+  if (heldByMe.value) return false;
+  return current.status === "processing";
+});
+// 只有处理中且归我（或 admin 强制退回他人）才出现「退出」；
+// admin 打开别人的工单时先不给强制退回入口，避免误操作
+const canReleaseCurrent = computed(
+  () => ticket.value?.status === "processing" && heldByMe.value,
+);
+
+// 公告只读；求提示邮件必须走报价流程；工单被他人持有时也不能回复
+const canReply = computed(() => {
+  const item = mail.value;
+  if (!item?.canReply) return false;
+  if (item.source === "hint") return false;
+  if (blockedByTicket.value) return false;
+  return auth.can("msg.feedback.handle");
+});
+
+const replyBlockedReason = computed(() => {
+  if (!mail.value) return "邮件未加载。";
+  if (mail.value.source === "hint") {
+    return "求提示邮件请在「提示工作台」报价 / 答复，不能直接回复。";
+  }
+  if (blockedByTicket.value) {
+    return "该工单已被其他 staff 接手，无法回复。";
+  }
+  return "这封邮件不可回复（官方公告只读，或当前账号没有 msg.feedback.handle 权限）。";
+});
+
+// ---- 列表行的工单派生 ----
+const rowTicketStatus = (row) => row?.ticketStatus || row?.ticket?.status || "";
+const isMine = (row) => isTicketMine(row?.ticket, auth.account);
+const isOverdueRow = (row) =>
+  Boolean(
+    row?.ticket?.overdue ||
+      row?.ticket?.pendingOverdue ||
+      row?.ticket?.processingOverdue,
+  );
+// 摘要缺失且工单在别人手上 → 服务端按设计隐藏了 snippet
+const isSnippetHidden = (row) =>
+  !row?.snippet && rowTicketStatus(row) === "processing" && !isMine(row);
 
 const drawerTitle = computed(() => {
   const item = mail.value;
@@ -267,6 +464,9 @@ async function openMail(row) {
   drawer.visible = true;
   mail.value = null;
   messages.value = [];
+  // 上一封的工单信息不能留到这一封上
+  ticket.value = null;
+  heldByOther.value = "";
   await loadMessages();
 }
 
@@ -277,12 +477,15 @@ async function loadMessages() {
 
   const seq = ++detailSeq;
   drawer.loading = true;
+  heldByOther.value = "";
   try {
     const data = await getMail(requestedId);
     // 已经切到别的邮件、或已有更新的请求 → 丢弃这次响应
     if (seq !== detailSeq || requestedId !== drawer.mailId) return;
 
     mail.value = data?.mail || null;
+    // 工单：这封自己的 ticket 优先，会话级 threadTicket 兜底（2.0 起详情就返回这两个）
+    ticket.value = data?.mail?.ticket ?? data?.threadTicket ?? null;
     // 渲染顺序：mail（当前打开这封，时间最新）在前，replyChain 按服务端顺序
     //（时间倒序，最新祖先在前、链尾是根）跟在后面——旧信息排在时间新的正文之后。
     const chain = Array.isArray(data?.replyChain) ? data.replyChain : [];
@@ -298,6 +501,17 @@ async function loadMessages() {
   } catch (err) {
     // 被替换的请求失败不打扰操作员
     if (seq !== detailSeq || requestedId !== drawer.mailId) return;
+
+    // 被其他 staff 持有：这不是错误，是工单模型的正常结果 —— 显示占位而不是红字
+    const descriptor = describeTicketError(err);
+    if (descriptor?.action === TICKET_ERROR_ACTION.HELD) {
+      heldByOther.value = descriptor.holder;
+      mail.value = null;
+      messages.value = [];
+      ticket.value = descriptor.ticket ?? { status: "processing" };
+      return;
+    }
+
     ElMessage.error(extractErrorMessage(err));
   } finally {
     if (seq === detailSeq) drawer.loading = false;
@@ -331,15 +545,40 @@ function senderName(msg) {
   return from.name || `#${from.id}`;
 }
 
+// 回复：先把「点发送这一刻」的目标与工单固定下来，之后即使切走也不受影响。
+// 工单未办结时必须带 ticket_id；后端还会要求由持单人执行 ——
+// 所以遇到 TICKET_NOT_CLAIMED 时自动 claim 一次再重试（admin 打开 pending 工单就是这种情况）。
 async function sendReply() {
   if (!canReply.value || !drawer.content.trim()) return;
 
-  // 发到点发送时看到的那封邮件；之后即使切到别的邮件也不受影响
   const targetId = drawer.mailId;
+  const content = drawer.content.trim();
+  const activeTicket = isTicketOpen(ticket.value) ? ticket.value : null;
+  const body = activeTicket
+    ? { content, ticket_id: activeTicket.ticketId }
+    : { content };
+
   drawer.sending = true;
   try {
-    await replyMail(targetId, { content: drawer.content.trim() });
+    let data;
+    try {
+      data = await replyMail(targetId, body);
+    } catch (err) {
+      const descriptor = describeTicketError(err);
+      if (descriptor?.action !== TICKET_ERROR_ACTION.CLAIM || !activeTicket) {
+        throw err;
+      }
+      // 没接单：先接单再重试一次（写操作幂等性由后端保证，reply 未落库才会到这里）
+      const claimed = await claimTicketQuietly(activeTicket.ticketId);
+      if (!claimed.ok) throw err;
+      data = await replyMail(targetId, body);
+    }
+
     ElMessage.success("已回复");
+    // 回复会办结工单：用响应里的 ticketId / ticketStatus 更新状态条（不一致时以重取为准）
+    if (data?.ticketStatus && ticket.value?.ticketId === data.ticketId) {
+      ticket.value = { ...ticket.value, status: data.ticketStatus };
+    }
     // 回复成功后自动关闭抽屉，回到列表并刷新（反映新回复与未读状态）；
     // 期间已切到别的邮件时，不要清空正文或关掉当前这个抽屉
     if (targetId === drawer.mailId) {
@@ -347,17 +586,144 @@ async function sendReply() {
       drawer.visible = false;
     }
     first().catch((err) => ElMessage.error(extractErrorMessage(err)));
+    refreshTicketSummary();
   } catch (err) {
-    if (targetId === drawer.mailId) ElMessage.error(extractErrorMessage(err));
+    const descriptor = describeTicketError(err);
+    if (descriptor?.action === TICKET_ERROR_ACTION.RELOAD) {
+      // 工单已变化 / 被别人接走：提示 + 刷新列表与详情，草稿保留
+      ElMessage.warning(descriptor.message);
+      first().catch(() => {});
+      refreshTicketSummary();
+      if (targetId === drawer.mailId) void loadMessages();
+      return;
+    }
+    if (targetId === drawer.mailId) {
+      ElMessage.error(descriptor?.message || extractErrorMessage(err));
+    }
   } finally {
     drawer.sending = false;
   }
 }
 
+// 退出 / 标记未处理：把工单退回待处理，其他同事可接手。
+// 注意待处理计时不重置（超时仍按最初来信时间算），提示里要说明。
+async function releaseCurrentTicket() {
+  const active = ticket.value;
+  if (!active?.ticketId || releasing.value) return;
+
+  releasing.value = true;
+  try {
+    const result = await releaseTicketQuietly(active.ticketId);
+    if (!result.ok) {
+      const descriptor = result.descriptor;
+      if (descriptor?.action === TICKET_ERROR_ACTION.RELOAD) {
+        ElMessage.warning(descriptor.message);
+        void loadMessages();
+        refreshTicketSummary();
+      } else {
+        ElMessage.error(descriptor?.message || "退出工单失败");
+      }
+      return;
+    }
+    ticket.value = result.ticket ?? {
+      ...active,
+      status: "pending",
+      assignee: null,
+    };
+    ElMessage.success("已释放该工单，其他同事可接手（待处理计时不重置）");
+    first().catch(() => {});
+    refreshTicketSummary();
+  } finally {
+    releasing.value = false;
+  }
+}
+
+// ---- 列表内的工单动作（不必先打开详情）----
+// 每行一个忙标记，避免同一行连点；键 = `mailId:动作`
+const rowBusy = ref("");
+
+function patchRowTicket(row, ticket) {
+  if (!ticket) return;
+  row.ticket = ticket;
+  row.ticketStatus = ticket.status;
+}
+
+// 接手：pending → processing（幂等；被别人抢先 → 409 TICKET_CLAIMED）
+async function claimRow(row) {
+  const ticketId = row.ticket?.ticketId;
+  if (!ticketId || rowBusy.value) return;
+
+  const key = `${row.mailId}:claim`;
+  rowBusy.value = key;
+  try {
+    const result = await claimTicketQuietly(ticketId);
+    if (!result.ok) {
+      const descriptor = result.descriptor;
+      if (descriptor?.action === TICKET_ERROR_ACTION.RELOAD) {
+        ElMessage.warning(descriptor.message);
+        first().catch(() => {});
+      } else {
+        ElMessage.error(descriptor?.message || "接手失败");
+      }
+      refreshTicketSummary();
+      return;
+    }
+    patchRowTicket(row, result.ticket);
+    ElMessage.success("已接手，其他同事将无法查看内容");
+    refreshTicketSummary();
+  } finally {
+    rowBusy.value = "";
+  }
+}
+
+// 退出：processing → pending（只有处理人本人能退；计时不重置）
+async function releaseRow(row) {
+  const ticketId = row.ticket?.ticketId;
+  if (!ticketId || rowBusy.value) return;
+
+  const key = `${row.mailId}:release`;
+  rowBusy.value = key;
+  try {
+    const result = await releaseTicketQuietly(ticketId);
+    if (!result.ok) {
+      const descriptor = result.descriptor;
+      ElMessage.error(descriptor?.message || "退出失败");
+      if (descriptor?.action === TICKET_ERROR_ACTION.RELOAD) {
+        first().catch(() => {});
+      }
+      refreshTicketSummary();
+      return;
+    }
+    patchRowTicket(
+      row,
+      result.ticket ?? { ...row.ticket, status: "pending", assignee: null },
+    );
+    ElMessage.success("已释放该工单，其他同事可接手（待处理计时不重置）");
+    refreshTicketSummary();
+  } finally {
+    rowBusy.value = "";
+  }
+}
+
 onMounted(() => {
   first().catch((err) => ElMessage.error(extractErrorMessage(err)));
+  refreshTicketSummary();
   startPolling();
+  openMailFromQuery();
 });
+
+// ?mailId=：从求提示工作台的「提问邮件 / 议价邮件」跳过来时，直接打开那封
+function openMailFromQuery() {
+  const mailId = Number(route.query.mailId);
+  if (!Number.isFinite(mailId) || mailId <= 0) return;
+  // 列表还没回来也没关系：详情接口只要 id，抽屉照常打开
+  void openMail({ mailId });
+}
+
+watch(
+  () => route.query.mailId,
+  () => openMailFromQuery(),
+);
 
 onBeforeUnmount(() => {
   stopPolling();
@@ -368,6 +734,70 @@ onBeforeUnmount(() => {
 .tip {
   color: #909399;
   font-size: 12px;
+}
+
+/* 筛选栏右侧的分栏计数：辅助信息，弱化显示 */
+.summary-line {
+  margin-left: auto;
+  color: #909399;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+/* 主题列：标题 + 摘要两行；摘要缺失且有工单时给出「已隐藏」说明 */
+.subject-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.snippet {
+  margin: 0;
+  color: #909399;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hidden-tip {
+  margin: 0;
+  color: #c0c4cc;
+  font-size: 12px;
+}
+
+/* 自己持有的工单：标题前的小标记，方便在长列表里找回 */
+.mine-flag {
+  margin-right: 4px;
+  padding: 0 4px;
+  border-radius: 3px;
+  background: var(--el-color-primary-light-9);
+  color: var(--el-color-primary);
+  font-size: 11px;
+}
+
+/* 工单列：状态 + 超时 + 处理人 */
+.ticket-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+
+.overdue-flag {
+  color: var(--el-color-danger);
+  font-size: 11px;
+}
+
+.ticket-assignee {
+  color: #909399;
+  font-size: 11px;
+}
+
+/* 被他人持有：正文区换成占位说明，不再渲染任何邮件内容 */
+.held-placeholder {
+  padding: 12px 0;
 }
 
 /* 抽屉标题头：标题占满剩余宽度并在必要时省略，关闭按钮永远留在抽屉内。

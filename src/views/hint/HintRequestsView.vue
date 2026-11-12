@@ -1,24 +1,57 @@
 <template>
   <div class="page-card">
     <div class="filter-bar">
+      <!-- 工单筛选（迁移 0041）：默认只看待处理栏；业务状态仍然保留，便于回看历史 -->
+      <el-select v-model="filters.ticketStatus" style="width: 190px" @change="search">
+        <el-option
+          v-for="item in TICKET_FILTER_OPTIONS"
+          :key="item.value"
+          :label="item.label"
+          :value="item.value"
+        />
+      </el-select>
       <el-select v-model="filters.status" style="width: 160px" @change="search">
         <el-option v-for="item in STATUS_OPTIONS" :key="item.value" :label="item.label" :value="item.value" />
       </el-select>
+      <el-checkbox v-model="filters.ticketOverdue" @change="search">只看超时</el-checkbox>
       <el-button type="primary" @click="search">查询</el-button>
       <el-button @click="reset">重置</el-button>
       <span class="tip">
-        默认只列待报价；报价即受理并释放该队的一个待报价名额；答复在玩家确认扣费后才送达。
+        报价前需先接手工单；报价即受理并释放该队的一个待报价名额；答复在玩家确认扣费后才送达。
+      </span>
+      <span v-if="hintSummary" class="summary-line">
+        待处理 {{ hintSummary.pending }} · 处理中 {{ hintSummary.processing }} ·
+        超时 {{ (hintSummary.pendingOverdue ?? 0) + (hintSummary.processingOverdue ?? 0) }}
+        <template v-if="hintSummary.mine">· 我处理中 {{ hintSummary.mine }}</template>
       </span>
     </div>
 
-    <el-table v-loading="loading" :data="list" row-key="id" border stripe>
-      <!-- 展开行：问题全文、staff 自己写下的答复（draftReply）与各阶段时间，方便回看核对 -->
+    <el-table
+      v-loading="loading"
+      :data="list"
+      row-key="id"
+      border
+      stripe
+      @expand-change="onExpandChange"
+    >
+      <!-- 展开行：工单状态条、问题全文、staff 自己写下的答复（draftReply）与各阶段时间 -->
       <el-table-column type="expand">
         <template #default="{ row }">
           <div class="expand">
+            <TicketBar
+              :ticket="row.ticket"
+              :can-release="isMine(row)"
+              :busy="releasingId === row.ticket?.ticketId"
+              @release="releaseRowTicket(row)"
+            />
+
             <div class="expand-block">
               <span class="expand-label">问题</span>
-              <p class="expand-text">{{ row.question || "—" }}</p>
+              <p v-if="row.question" class="expand-text">{{ row.question }}</p>
+              <p v-else-if="isContentHidden(row)" class="expand-text hidden-tip">
+                其他 staff 处理中，问题内容已隐藏
+              </p>
+              <p v-else class="expand-text">—</p>
               <!-- 提问截图（2026-10-31 起）：报价前就能看，是定价依据 -->
               <AttachmentGallery :items="row.attachments" size="large" />
             </div>
@@ -26,8 +59,32 @@
               <span class="expand-label">
                 答复（只存服务端，玩家确认扣费后才送达）
               </span>
-              <p class="expand-text">{{ row.draftReply || "—" }}</p>
+              <p v-if="row.draftReply" class="expand-text">{{ row.draftReply }}</p>
+              <p v-else-if="isContentHidden(row)" class="expand-text hidden-tip">
+                其他 staff 处理中，答复内容已隐藏
+              </p>
+              <p v-else class="expand-text">—</p>
             </div>
+            <p v-if="row.questionMailId || row.cheaperMailId" class="expand-links">
+              <el-button
+                v-if="row.questionMailId"
+                link
+                type="primary"
+                size="small"
+                @click="openRelatedMail(row.questionMailId)"
+              >
+                提问邮件 #{{ row.questionMailId }}
+              </el-button>
+              <el-button
+                v-if="row.cheaperMailId"
+                link
+                type="primary"
+                size="small"
+                @click="openRelatedMail(row.cheaperMailId)"
+              >
+                议价邮件 #{{ row.cheaperMailId }}
+              </el-button>
+            </p>
             <el-descriptions :column="3" size="small" border>
               <el-descriptions-item label="实际扣费">
                 {{ row.cost ?? "—" }}
@@ -70,6 +127,26 @@
       <el-table-column label="问题" min-width="240">
         <template #default="{ row }">
           <span class="question">{{ row.question || "—" }}</span>
+          <p v-if="!row.question && isContentHidden(row)" class="hidden-tip">
+            其他 staff 处理中，内容已隐藏
+          </p>
+        </template>
+      </el-table-column>
+      <el-table-column label="工单" width="150">
+        <template #default="{ row }">
+          <div v-if="rowTicketStatus(row)" class="ticket-cell">
+            <el-tag
+              size="small"
+              :type="statusMeta(rowTicketStatus(row), TICKET_STATUS).type"
+            >
+              {{ statusMeta(rowTicketStatus(row), TICKET_STATUS).label }}
+            </el-tag>
+            <span v-if="isOverdueRow(row)" class="overdue-flag">超时</span>
+            <span class="ticket-assignee">
+              {{ ticketAssigneeName(row.ticket) || "未接手" }}
+            </span>
+          </div>
+          <span v-else>—</span>
         </template>
       </el-table-column>
       <el-table-column label="当前报价" width="100">
@@ -176,9 +253,12 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
+import { useRouter } from "vue-router";
 import { useAuthStore } from "@/stores/auth";
 import {
     declineCheaperHint,
+    getHintRequest,
+    getTicketSummary,
     listHintRequests,
     quoteHint,
     rejectHint,
@@ -186,12 +266,29 @@ import {
 } from "@/api/msg";
 import { useCursorPage } from "@/composables/useCursorPage";
 import { useWorkbenchBadges } from "@/composables/useWorkbenchBadges";
+import {
+    TICKET_ERROR_ACTION,
+    claimTicketQuietly,
+    describeTicketError,
+    releaseTicketQuietly,
+} from "@/composables/useTicketActions";
 import PageNav from "@/components/PageNav.vue";
 import AttachmentGallery from "@/components/AttachmentGallery.vue";
-import { fmtTime, HINT_STATUS, statusMeta } from "@/utils/format";
+import TicketBar from "@/components/TicketBar.vue";
+import {
+    fmtTime,
+    HINT_STATUS,
+    isTicketMine,
+    isTicketOpen,
+    statusMeta,
+    TICKET_FILTER_OPTIONS,
+    TICKET_STATUS,
+    ticketAssigneeName,
+} from "@/utils/format";
 import { extractErrorMessage } from "@/api/errors";
 
 const auth = useAuthStore();
+const router = useRouter();
 // 写操作需要 msg.hint.handle（admin 由 store 的 can() 直通）
 const canHandle = computed(() => auth.can("msg.hint.handle"));
 const { refreshHints } = useWorkbenchBadges();
@@ -205,16 +302,35 @@ const STATUS_OPTIONS = [
     { value: "all", label: "全部" },
 ];
 
-const filters = reactive({ status: "pending" });
+// 工单筛选（迁移 0041）：默认只看待处理栏；业务状态默认 all，
+// 因为一条求提示在生命周期里会跨多个业务状态，靠工单状态做主视图更符合工作台语义
+const filters = reactive({
+    status: "all",
+    ticketStatus: "open",
+    ticketOverdue: false,
+});
 
-const fetcher = (cursor) => listHintRequests({ ...filters, cursor, limit: 50 });
+// 分栏计数（byKind.hint）：只在有 msg.hint.handle 时才有意义
+const ticketSummary = ref(null);
+const hintSummary = computed(() => ticketSummary.value?.byKind?.hint ?? null);
+
+const fetcher = (cursor) =>
+    listHintRequests({
+        status: filters.status,
+        ticket_status: filters.ticketStatus || undefined,
+        ticket_overdue: filters.ticketOverdue ? 1 : undefined,
+        cursor,
+        limit: 50,
+    });
 const { list, page, hasMore, loading, first, next, prev } = useCursorPage(fetcher);
 
 function search() {
     first();
 }
 function reset() {
-    filters.status = "pending";
+    filters.status = "all";
+    filters.ticketStatus = "open";
+    filters.ticketOverdue = false;
     first();
 }
 
@@ -246,6 +362,134 @@ function cheaperMeta(row) {
 // 有待回应的降价申请：只有此时才能「降价」或「拒绝降价」
 function needsCheaperReply(row) {
     return !!row.cheaperRequestedAt && !row.cheaperDecidedAt;
+}
+
+// ---- 工单派生 ----
+const rowTicketStatus = (row) => row?.ticketStatus || row?.ticket?.status || "";
+const isMine = (row) => isTicketMine(row?.ticket, auth.account);
+const isOverdueRow = (row) =>
+    Boolean(
+        row?.ticket?.overdue ||
+            row?.ticket?.pendingOverdue ||
+            row?.ticket?.processingOverdue,
+    );
+// 内容缺失且工单在别人手上 → 服务端按设计隐藏了 question / draftReply / attachments
+const isContentHidden = (row) =>
+    rowTicketStatus(row) === "processing" && !isMine(row);
+
+const releasingId = ref(null);
+
+// 分栏计数：失败静默（辅助信息）
+async function refreshTicketSummary() {
+    try {
+        ticketSummary.value = await getTicketSummary();
+    } catch {
+        // 保持上一次的数字
+    }
+}
+
+// 展开行 = 打开这条求提示详情：staff 会因此占位接单（admin 只读）。
+// 已被别人持有时不再发请求（服务端也会 403），直接由 isContentHidden 显示占位。
+async function onExpandChange(row, expandedRows) {
+    const expanded = Array.isArray(expandedRows)
+        ? expandedRows.includes(row)
+        : Boolean(expandedRows);
+    if (!expanded) return;
+    if (isContentHidden(row)) return;
+
+    try {
+        const data = await getHintRequest(row.id);
+        if (!data) return;
+        Object.assign(row, data);
+        row.ticketStatus = data.ticket?.status ?? row.ticketStatus;
+        refreshTicketSummary();
+    } catch (err) {
+        const descriptor = describeTicketError(err);
+        if (descriptor) {
+            ElMessage.warning(descriptor.message);
+            if (descriptor.action === TICKET_ERROR_ACTION.RELOAD) {
+                first().catch(() => {});
+                refreshTicketSummary();
+            }
+            return;
+        }
+        ElMessage.error(extractErrorMessage(err, "求提示详情加载失败"));
+    }
+}
+
+// 打开关联邮件（提问 / 议价）：跳到站内信工作台并直接打开那封
+function openRelatedMail(mailId) {
+    if (!mailId) return;
+    router.push({ path: "/letters/messages", query: { mailId: String(mailId) } });
+}
+
+// 统一的「先确保持有工单，再执行动作」：
+//   · 工单未办结且不是我的 → 先 claim（别人持有则提示并中止）
+//   · 未办结 → body 里带 ticket_id；已办结 → 不带
+// 409/403 统一翻译；RELOAD 类会刷新列表与计数。
+async function withTicket(row, run) {
+    const ticket = row.ticket;
+    let ticketId = null;
+
+    if (isTicketOpen(ticket)) {
+        if (!isMine(row)) {
+            const claimed = await claimTicketQuietly(ticket.ticketId);
+            if (!claimed.ok) {
+                ElMessage.warning(claimed.descriptor?.message || "接手工单失败");
+                if (claimed.descriptor?.action === TICKET_ERROR_ACTION.RELOAD) {
+                    first().catch(() => {});
+                }
+                refreshTicketSummary();
+                return { ok: false };
+            }
+            row.ticket = claimed.ticket ?? { ...ticket, status: "processing" };
+            row.ticketStatus = row.ticket.status;
+            refreshTicketSummary();
+        }
+        ticketId = row.ticket?.ticketId ?? ticket.ticketId;
+    }
+
+    try {
+        await run(ticketId ? { ticket_id: ticketId } : {});
+        return { ok: true };
+    } catch (err) {
+        const descriptor = describeTicketError(err);
+        if (descriptor) {
+            ElMessage.warning(descriptor.message);
+            if (descriptor.action === TICKET_ERROR_ACTION.RELOAD) {
+                first().catch(() => {});
+                refreshTicketSummary();
+            }
+            return { ok: false };
+        }
+        ElMessage.error(extractErrorMessage(err));
+        return { ok: false };
+    }
+}
+
+// 退出 / 标记未处理（展开行里的 TicketBar）
+async function releaseRowTicket(row) {
+    const ticketId = row.ticket?.ticketId;
+    if (!ticketId || releasingId.value) return;
+
+    releasingId.value = ticketId;
+    try {
+        const result = await releaseTicketQuietly(ticketId);
+        if (!result.ok) {
+            ElMessage.error(result.descriptor?.message || "退出工单失败");
+            if (result.descriptor?.action === TICKET_ERROR_ACTION.RELOAD) {
+                first().catch(() => {});
+            }
+            refreshTicketSummary();
+            return;
+        }
+        row.ticket = result.ticket ?? { ...row.ticket, status: "pending", assignee: null };
+        row.ticketStatus = row.ticket.status;
+        ElMessage.success("已释放该工单，其他同事可接手（待处理计时不重置）");
+        refreshTicketSummary();
+    } finally {
+        releasingId.value = null;
+    }
 }
 
 // 每个按钮自己的 loading 键（`行ID:动作`），避免同一条请求并发点两次
@@ -309,19 +553,23 @@ async function submitForm() {
     busyKey.value = `${row.id}:${formDialog.mode}`;
     formDialog.loading = true;
     try {
-        if (formDialog.mode === "requote") {
-            await requoteHint(row.id, { cost, reply });
-            ElMessage.success("已降价并更新答复，等待玩家按新价确认");
-        } else {
-            await quoteHint(row.id, { cost, reply });
-            ElMessage.success("已报价，等待玩家确认扣费");
-        }
+        const result = await withTicket(row, (extra) =>
+            formDialog.mode === "requote"
+                ? requoteHint(row.id, { cost, reply, ...extra })
+                : quoteHint(row.id, { cost, reply, ...extra }),
+        );
+        if (!result.ok) return;
+
+        ElMessage.success(
+            formDialog.mode === "requote"
+                ? "已降价并更新答复，等待玩家按新价确认"
+                : "已报价，等待玩家确认扣费",
+        );
         formDialog.visible = false;
         // 待报价 → 已报价（或降价被受理），「提示工作台」角标要立刻跟上
         void refreshHints();
         first();
-    } catch (err) {
-        ElMessage.error(extractErrorMessage(err));
+        refreshTicketSummary();
     } finally {
         formDialog.loading = false;
         busyKey.value = "";
@@ -341,12 +589,14 @@ async function declineCheaper(row) {
     }
     busyKey.value = `${row.id}:decline`;
     try {
-        await declineCheaperHint(row.id);
+        const result = await withTicket(row, (extra) =>
+            declineCheaperHint(row.id, extra),
+        );
+        if (!result.ok) return;
         ElMessage.success("已拒绝降价，当前报价已标记为最低报价");
         void refreshHints();
         first();
-    } catch (err) {
-        ElMessage.error(extractErrorMessage(err));
+        refreshTicketSummary();
     } finally {
         busyKey.value = "";
     }
@@ -371,27 +621,31 @@ async function rejectRow(row) {
     }
     busyKey.value = `${row.id}:reject`;
     try {
-        await rejectHint(row.id, { reason: reason.trim() });
+        const result = await withTicket(row, (extra) =>
+            rejectHint(row.id, { reason: reason.trim(), ...extra }),
+        );
+        if (!result.ok) return;
         ElMessage.success("已拒绝");
         void refreshHints();
         first();
-    } catch (err) {
-        ElMessage.error(extractErrorMessage(err));
+        refreshTicketSummary();
     } finally {
         busyKey.value = "";
     }
 }
 
-// 工作台每 15 秒自动刷新一次：新提问要能自己冒出来，不用手动点「查询」。
-// 只在第一页（first() 会重置游标栈与页码）、没有请求在跑、没有开着报价对话框时刷新，
-// 避免打断正在填报价或翻旧记录的操作员。
-const POLL_INTERVAL_MS = 15000;
+// 工作台每 3 分钟自动刷新一次：新提问要能自己冒出来，但不必每分钟都重拉列表
+//（手动「查询」/「刷新」随时可用）。只在第一页（first() 会重置游标栈与页码）、
+// 没有请求在跑、没有开着报价对话框时刷新，避免打断正在填报价或翻旧记录的操作员。
+const POLL_INTERVAL_MS = 180000;
 let pollTimer = null;
 
 function startPolling() {
     stopPolling();
     pollTimer = setInterval(() => {
         if (document.hidden) return;
+        // 计数每轮都刷（辅助信息，不影响正在填的表单）
+        refreshTicketSummary();
         if (formDialog.visible) return;
         if (page.value !== 1 || loading.value) return;
         first().catch(() => {
@@ -409,6 +663,7 @@ function stopPolling() {
 
 onMounted(() => {
     first().catch((err) => ElMessage.error(extractErrorMessage(err)));
+    refreshTicketSummary();
     startPolling();
 });
 
@@ -452,5 +707,37 @@ onBeforeUnmount(stopPolling);
     font-size: 13px;
     white-space: pre-wrap;
     word-break: break-word;
+}
+.hidden-tip {
+    margin: 0;
+    font-size: 12px;
+    color: #c0c4cc;
+}
+.expand-links {
+    margin: 0;
+    display: flex;
+    gap: 8px;
+}
+/* 工单列：状态 + 超时 + 处理人 */
+.ticket-cell {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
+}
+.overdue-flag {
+    color: var(--el-color-danger);
+    font-size: 11px;
+}
+.ticket-assignee {
+    color: #909399;
+    font-size: 11px;
+}
+/* 筛选栏右侧的分栏计数 */
+.summary-line {
+    margin-left: auto;
+    color: #909399;
+    font-size: 12px;
+    white-space: nowrap;
 }
 </style>

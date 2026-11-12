@@ -98,6 +98,69 @@ export function statusMeta(status, map) {
     return map[status] || { label: `未知(${status})`, type: "info" };
 }
 
+// 工单状态（2026-11-12 迁移 0041，api-9 §站内信与公告接口）。
+// open / closed 是**列表筛选**用的聚合值（open = pending + processing，closed = done + superseded），
+// 不会出现在 ticket.status 里；ticket.status 只有下面四项。
+export const TICKET_STATUS = {
+    pending: { label: "待处理", type: "warning" },
+    processing: { label: "处理中", type: "primary" },
+    done: { label: "已处理", type: "success" },
+    superseded: { label: "已被接续", type: "info" },
+};
+
+// 工单类型：普通来信，以及求提示的两次动作（与站内信工作台共享同一行工单）
+export const TICKET_KIND = {
+    mail: { label: "来信", type: "info" },
+    hint_quote: { label: "求提示 · 报价", type: "success" },
+    hint_cheaper: { label: "求提示 · 议价", type: "warning" },
+};
+
+// 工单状态筛选项（ticket_status）。默认 open = 工作台的「待处理栏」。
+export const TICKET_FILTER_OPTIONS = [
+    { value: "open", label: "待处理（含处理中）" },
+    { value: "pending", label: "仅待处理" },
+    { value: "processing", label: "仅处理中" },
+    { value: "closed", label: "已结束" },
+    { value: "done", label: "仅已处理" },
+    { value: "superseded", label: "仅已被接续" },
+    { value: "all", label: "全部状态" },
+];
+
+// 工单归属筛选项（ticket_assignee）。默认 all：积压与自己的都要看得到。
+export const TICKET_ASSIGNEE_OPTIONS = [
+    { value: "all", label: "全部归属" },
+    { value: "me", label: "我处理中" },
+    { value: "unassigned", label: "没人接手" },
+];
+
+// 工单是否当前「未办结」：只有这两种状态需要持单人才能操作。
+// 用于决定要不要带 ticket_id / 是否需要先接单。
+export function isTicketOpen(ticket) {
+    return ticket?.status === "pending" || ticket?.status === "processing";
+}
+
+// 工单处理人：assignee 可能是用户名 / { id, username } / { id, name }（后端形状尚未固定），
+// 统一取一个可读文案；已办结时回退 handledBy。
+export function ticketAssigneeName(ticket) {
+    const raw = ticket?.assignee ?? ticket?.handledBy ?? null;
+    if (!raw) return "";
+    if (typeof raw === "string") return raw;
+    return raw.username || raw.name || (raw.id == null ? "" : `#${raw.id}`);
+}
+
+// 当前账号是否就是这条工单的处理人（assignee 可能是对象或字符串，两种都认）
+export function isTicketMine(ticket, account) {
+    const raw = ticket?.assignee;
+    if (!raw) return false;
+    if (typeof raw === "object") {
+        if (raw.id != null && account?.id != null) {
+            return String(raw.id) === String(account.id);
+        }
+        return Boolean(raw.username) && raw.username === account?.username;
+    }
+    return account?.username ? String(raw) === String(account.username) : false;
+}
+
 // 审计动作清单（api-9-admin.md §9.7）：动作名是契约，后端将来新增的动作按原文展示
 export const AUDIT_ACTIONS = {
     "player.warn": "警告玩家",
