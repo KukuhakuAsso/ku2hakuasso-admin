@@ -2,11 +2,14 @@
 //
 // 后端在 403 / 409 上给了 `detail.reason_code`，前端不要匹配中文 message：
 //   403 TICKET_HELD_BY_OTHER   → 已被其他 staff 接手，内容不可见
-//   409 TICKET_NOT_CLAIMED     → 还没接单（可以先 claim 再重试一次）
+//   403 TICKET_NOT_CLAIMED     → 还没接单（**详情 GET** 用 403；可以先 claim 再重试一次）
+//   409 TICKET_NOT_CLAIMED     → 还没接单（**回复 / 报价 / 回复申诉** 用 409，动作同上）
 //   409 TICKET_CLAIMED         → 别人抢先接了
 //   409 TICKET_STALE           → 工单已变化（可能来了新的来信）
 //   409 TICKET_WRONG_WORKBENCH → 该工单属于另一个工作台
 //   409 TICKET_NOT_PROCESSING  → release 时发现它已不在处理中
+// 其余 403（HINT_REPLY_CLOSED / APPEAL_REPLY_CLOSED / 缺来源权限等）没有可执行的动作，
+// 这里返回 null，由调用方用 extractErrorMessage 展示后端原文。
 import { claimTicket, releaseTicket } from "@/api/msg";
 import { ticketAssigneeName } from "@/utils/format";
 
@@ -44,14 +47,18 @@ export function describeTicketError(error) {
         };
     }
 
+    // 2.2.0 起详情 GET 改为纯读，未接单时用 403 + 这个原因码（回复类接口仍是 409）；
+    // 两个状态码同一个原因码，都要认。
+    if ((status === 403 || status === 409) && reason === "TICKET_NOT_CLAIMED") {
+        return {
+            action: TICKET_ERROR_ACTION.CLAIM,
+            reasonCode: reason,
+            ticket: detail.ticket ?? null,
+            message: "请先接手该工单再操作",
+        };
+    }
+
     if (status === 409) {
-        if (reason === "TICKET_NOT_CLAIMED") {
-            return {
-                action: TICKET_ERROR_ACTION.CLAIM,
-                reasonCode: reason,
-                message: "请先接手该工单再操作",
-            };
-        }
         if (reason === "TICKET_CLAIMED") {
             return {
                 action: TICKET_ERROR_ACTION.RELOAD,

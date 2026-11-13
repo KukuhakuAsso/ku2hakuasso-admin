@@ -166,8 +166,8 @@ import { fmtTime, TEAM_STATUS, TEAM_STATUS_OPTIONS, statusMeta } from "@/utils/f
 import { extractErrorMessage } from "@/api/errors";
 
 const auth = useAuthStore();
-// 解封 = 处罚撤销：队伍会退出申诉工作台的「等官方反馈」列表，角标要立刻减
-const { refreshAppeals } = useWorkbenchBadges();
+// 解封 = 处罚撤销：队伍会退出申诉工单的未办结集合，角标（open 数）要立刻减
+const { refresh: refreshBadges } = useWorkbenchBadges();
 const filters = reactive({ status: 0 });
 
 const fetcher = (cursor) => listTeams({ ...filters, cursor, limit: 50 });
@@ -267,7 +267,7 @@ async function unbanRow(row) {
     try {
         await unbanTeam(row.id);
         ElMessage.success("已解封（被封禁覆盖的原禁言不会恢复）");
-        void refreshAppeals();
+        void refreshBadges();
         first();
         refreshMutes();
     } catch (err) {

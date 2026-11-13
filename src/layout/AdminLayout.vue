@@ -111,7 +111,7 @@ const canNotify = computed(
         auth.can("msg.notify.send") ||
         auth.can("msg.announce.publish"),
 );
-// 申诉（等官方反馈）计数：admin 看全部，staff 需 moderation.mute（只有禁言申诉）
+// 申诉权限：admin 看全部，staff 需 moderation.mute（只有禁言申诉）
 const canHandleAppeals = computed(
     () => auth.isAdmin || auth.can("moderation.mute"),
 );
@@ -125,17 +125,18 @@ const { badges, refresh: refreshBadges, startPolling, stopPolling, reset: resetB
     useWorkbenchBadges();
 
 // 每一路都按权限决定是否请求：没权限的项不该发请求（会 403）。
-// mails = 来信工单 + 求提示工单的「待处理 + 我处理中」（同一个 summary 接口），
-// appeals = 还在「等官方反馈」的申诉数；两者合计就是侧栏那一个角标。
-const badgeAccess = computed(() => ({
-    mails:
-        auth.can("msg.feedback.handle") || auth.can("msg.hint.handle"),
-    appeals: canHandleAppeals.value,
-}));
+// 站内信工作台是一个整体（来信 / 求提示 / 申诉都在这一个页面里，角标也只有一个数），
+// 所以这里只判断「有没有任一处理权限」；至于各类型算多少，由后端按权限累加后给顶层 open。
+const canSeeTicketBadge = computed(
+    () =>
+        auth.can("msg.feedback.handle") ||
+        auth.can("msg.hint.handle") ||
+        canHandleAppeals.value,
+);
 
 onMounted(() => {
     // startPolling 内部会立刻拉一次，并负责 60 秒轮询 + 可见性恢复时补拉
-    startPolling(() => badgeAccess.value);
+    startPolling(() => canSeeTicketBadge.value);
 });
 
 onBeforeUnmount(() => {
@@ -145,11 +146,11 @@ onBeforeUnmount(() => {
 // 切页面就刷新一次：从工作台处理完返回时，角标立刻反映最新状态
 watch(
     () => route.path,
-    () => refreshBadges(badgeAccess.value),
+    () => refreshBadges(canSeeTicketBadge.value),
 );
 
-// 权限快照变化（登录后 syncAccount / 授权被回收）：重算一遍，被收回的那一路清零
-watch(badgeAccess, (access) => refreshBadges(access), { deep: true });
+// 权限快照变化（登录后 syncAccount / 授权被回收）：重算一遍，被收回时归零
+watch(canSeeTicketBadge, (can) => refreshBadges(can));
 
 async function onLogout() {
     await auth.logout();

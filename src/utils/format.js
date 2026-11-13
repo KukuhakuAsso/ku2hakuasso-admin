@@ -108,11 +108,14 @@ export const TICKET_STATUS = {
     superseded: { label: "已被接续", type: "info" },
 };
 
-// 工单类型：普通来信，以及求提示的两次动作（与站内信工作台共享同一行工单）
+// 工单类型：普通来信、求提示的两次动作、以及两类申诉（2.2.0 起申诉也进工单）。
+// 缺项会让详情里的工单条显示成「未知(kind)」，新增类型时记得同步这里。
 export const TICKET_KIND = {
     mail: { label: "来信", type: "info" },
     hint_quote: { label: "求提示 · 报价", type: "success" },
     hint_cheaper: { label: "求提示 · 议价", type: "warning" },
+    appeal_mute: { label: "禁言申诉", type: "warning" },
+    appeal_ban: { label: "封禁申诉", type: "danger" },
 };
 
 // 工单状态筛选项（ticket_status）。默认 open = 工作台的「待处理栏」。

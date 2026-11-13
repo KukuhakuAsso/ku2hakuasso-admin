@@ -1,8 +1,12 @@
 <script setup>
 // 申诉邮件的处理面板：原「申诉工作台」的回复申诉 / 解除禁言 / 解封并入站内信抽屉。
 //
-// 依赖后端在邮件里内联 `appeal` 快照（与 /admin/appeals 行同形）：
-//   { targetType, accountId, teamId, kind, state, awaitingReply, used, limit, … }
+// 依赖后端在邮件里内联 `appeal` 快照（2.2.0 起只有 6 个字段）：
+//   { targetType, accountId, teamId, kind, state, awaitingReply }
+// 处罚原因 / 到期 / 申诉进度 / 最近一封正文**本期不下发**（需要时以 GET /admin/appeals 同主体行为准），
+// 所以面板只按这 6 个字段渲染；将来后端补字段时下面的 v-if 会自动生效。
+//
+// 工单：该主体有未办结申诉工单时，回复必须带 `ticket_id` 且先接单（admin 也不例外）。
 // 申诉是「主体级」的：一个账号 / 队伍可能有多条申诉邮件，快照给的是最新状态。
 //
 // 回复只解锁该主体的下一条申诉，不会自动解除处罚 —— 所以解禁 / 解封是单独按钮。
@@ -13,13 +17,20 @@ import { replyAppeal, unmuteAccount, unmuteTeam } from "@/api/moderation";
 import { unbanPlayer } from "@/api/players";
 import { unbanTeam } from "@/api/teams";
 import { extractErrorMessage } from "@/api/errors";
+import {
+    TICKET_ERROR_ACTION,
+    claimTicketQuietly,
+    describeTicketError,
+} from "@/composables/useTicketActions";
 import { fmtTime } from "@/utils/format";
 
 const props = defineProps({
-    // 邮件详情里内联的申诉快照（没有则为 null；父级会回退到普通回复框）
+    // 邮件详情里内联的申诉快照（没有则为 null；父级会换成说明，不再回退普通回复框）
     appeal: { type: Object, default: null },
+    // 该主体未办结的申诉工单：回复要带 ticket_id，未接单时先 claim
+    ticketId: { type: [Number, String], default: null },
 });
-const emit = defineEmits(["done"]);
+const emit = defineEmits(["done", "conflict"]);
 
 const auth = useAuthStore();
 const content = ref("");
@@ -83,30 +94,71 @@ const until = computed(() => {
         kind.value === "ban" ? props.appeal?.banUntil : props.appeal?.muteUntil;
     return value ? `至 ${fmtTime(value)}` : "永久 / 未设置到期";
 });
+// 处罚原因 / 到期只有申诉列表行才下发（邮件里的快照只有 6 个字段）：
+// 有值才显示，避免恒定为空时渲染「— · 永久 / 未设置到期」。
+const penaltyLine = computed(() => {
+    if (!reason.value && !props.appeal?.banUntil && !props.appeal?.muteUntil) {
+        return "";
+    }
+    return `${reason.value || "—"} · ${until.value}`;
+});
 
-async function submitReply() {
+// 回复申诉：有未办结工单时带 ticket_id（否则后端 400）；未接单时后端 409
+// TICKET_NOT_CLAIMED —— 接单后重试一次（admin 也必须先 claim，没有例外）。
+async function submitReply({ retried = false } = {}) {
     const text = content.value.trim();
     if (!text) {
         ElMessage.warning("请填写回复正文");
         return;
     }
 
+    const ticketId = props.ticketId;
+    const body = {
+        kind: kind.value,
+        content: text,
+        ...(ticketId ? { ticket_id: ticketId } : {}),
+    };
+
     busyKey.value = "reply";
     try {
-        const data = await replyAppeal(targetType.value, targetId.value, {
-            kind: kind.value,
-            content: text,
-        });
+        const data = await replyAppeal(targetType.value, targetId.value, body);
         ElMessage.success("已回复，该主体可以继续申诉");
         content.value = "";
         emit("done", data);
     } catch (err) {
+        const descriptor = describeTicketError(err);
+
+        // 没接单：接手后原样重试一次（草稿保留）
+        if (
+            descriptor?.action === TICKET_ERROR_ACTION.CLAIM &&
+            !retried &&
+            ticketId
+        ) {
+            const attempt = await claimTicketQuietly(ticketId);
+            if (attempt.ok) {
+                await submitReply({ retried: true });
+                return;
+            }
+        }
+
+        // 被他人接手 / 工单已变化：父级会刷新列表与详情
+        if (
+            descriptor?.action === TICKET_ERROR_ACTION.HELD ||
+            descriptor?.action === TICKET_ERROR_ACTION.RELOAD
+        ) {
+            ElMessage.warning(descriptor.message);
+            emit("conflict");
+            return;
+        }
+
         if (err?.status === 404) {
             ElMessage.error("该主体没有可回复的申诉（可能已被处理）");
             emit("done", null);
             return;
         }
-        ElMessage.error(extractErrorMessage(err, "回复失败"));
+        ElMessage.error(
+            descriptor?.message || extractErrorMessage(err, "回复失败"),
+        );
     } finally {
         busyKey.value = "";
     }
@@ -178,7 +230,7 @@ async function unban() {
             <span v-if="appeal?.used !== undefined">
                 申诉进度 {{ appeal.used ?? 0 }}/{{ appeal.limit ?? 3 }}
             </span>
-            <span class="tip">{{ reason || "—" }} · {{ until }}</span>
+            <span v-if="penaltyLine" class="tip">{{ penaltyLine }}</span>
         </div>
 
         <el-input

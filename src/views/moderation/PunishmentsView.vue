@@ -146,8 +146,8 @@ import { useWorkbenchBadges } from "@/composables/useWorkbenchBadges";
 // 处罚记录：GET /admin/mutes（staff + moderation.mute）与 GET /admin/banneds（admin）。
 // 两个接口都不分页（limit ≤ 200），行里没有记录 id —— 解禁 / 解封都用 targetType + 目标 id。
 const auth = useAuthStore();
-// 在这里解禁 / 解封同样会让该主体退出申诉工作台的「等官方反馈」列表
-const { refreshAppeals } = useWorkbenchBadges();
+// 在这里解禁 / 解封同样会让该主体的申诉工单办结，侧栏角标（open 数）要重算
+const { refresh: refreshBadges } = useWorkbenchBadges();
 
 const canViewMutes = computed(() => auth.can("moderation.mute"));
 
@@ -259,7 +259,7 @@ async function onAction(row) {
         : unmuteAccount(targetId));
       ElMessage.success("已解除禁言");
     }
-    void refreshAppeals();
+    void refreshBadges();
     reload();
   } catch (err) {
     // 解禁 404 = 当前未禁言（多半是刚好到期自动解除）

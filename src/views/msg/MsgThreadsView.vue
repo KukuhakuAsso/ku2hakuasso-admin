@@ -57,7 +57,7 @@
       :data="list"
       border
       stripe
-      @row-click="openMail"
+      @row-click="openRow"
     >
       <el-table-column prop="mailId" label="邮件ID" width="90" />
       <el-table-column label="主题" min-width="240">
@@ -172,7 +172,15 @@
           >
             强制退回
           </el-button>
-          <el-button size="small" text type="primary" @click.stop="openMail(row)">
+          <!-- 没接手就不给看详情：详情里能读到正文与附件，工单模型是「谁接手谁负责」 -->
+          <el-button
+            size="small"
+            text
+            type="primary"
+            :disabled="!canOpenRow(row)"
+            :title="canOpenRow(row) ? '' : viewBlockedReason(row)"
+            @click.stop="openRow(row)"
+          >
             查看
           </el-button>
         </template>
@@ -246,6 +254,48 @@
             <div class="msg-subject">{{ msg.subject }}</div>
             <div class="msg-bubble">{{ msg.content }}</div>
             <AttachmentGallery :items="msg.attachments" />
+            <!-- 官方发给玩家的消息下方：可展开「那一次提示」对应的报价记录（含当时暂存的答案）。
+                 求提示详情链上每封都没有 hint 快照，报价记录只挂在请求的那封 mail.hintQuotes[]，
+                 所以这里按 hintQuotes[].mailId 匹配这一封；匹配不到时（如答复邮件）
+                 取这封之前最近的一次报价。 -->
+            <template
+              v-if="
+                msg.direction === 'to_player' &&
+                isHintMail &&
+                quotesForMessage(msg).length
+              "
+            >
+              <el-button
+                link
+                type="primary"
+                class="quote-toggle"
+                @click="toggleQuoteFor(msg.mailId)"
+              >
+                {{
+                  quoteOpenMailId === msg.mailId ? "收起历史提示" : "查看历史提示"
+                }}
+              </el-button>
+              <div v-if="quoteOpenMailId === msg.mailId" class="quote-history">
+                <div
+                  v-for="q in quotesForMessage(msg)"
+                  :key="q.quoteId ?? q.seq"
+                  class="quote-history__item"
+                >
+                  <div class="quote-history__head">
+                    <span class="quote-history__seq">#{{ q.seq }}</span>
+                    <span>{{ q.kind === "requote" ? "改价" : "报价" }}</span>
+                    <strong>{{ q.cost }} 点</strong>
+                    <el-tag size="small" :type="quoteTagType(q)" effect="plain">
+                      {{ quoteStatusText(q) }}
+                    </el-tag>
+                    <span class="tip">{{ fmtTime(q.createdAt) }}</span>
+                  </div>
+                  <p class="quote-history__reply">
+                    {{ q.reply || "（这次报价没有写答案）" }}
+                  </p>
+                </div>
+              </div>
+            </template>
           </div>
         </template>
       </div>
@@ -261,8 +311,18 @@
         <AppealActionPanel
           v-else-if="isAppealMail && mail?.appeal"
           :appeal="mail.appeal"
+          :ticket-id="appealTicketId"
           @done="onSourceActionDone"
+          @conflict="onSourceConflict"
         />
+        <!-- 申诉邮件但快照为空：没有可回复的申诉主体（正常数据不会出现），
+             这里不能再回退普通回复框 —— 后端对申诉邮件一律 403 APPEAL_REPLY_CLOSED -->
+        <div v-else-if="isAppealMail" class="reply-bar">
+          <p class="tip">
+            这封申诉邮件没有可用的申诉状态，无法在此回复。请到「处罚记录 ·
+            申诉」查看与处理。
+          </p>
+        </div>
         <div v-else class="reply-bar">
           <p v-if="!canReply" class="tip">{{ replyBlockedReason }}</p>
           <template v-else>
@@ -335,7 +395,7 @@ const POLL_INTERVAL_MS = 180000;
 let pollTimer = null;
 
 const auth = useAuthStore();
-const { refreshMails, refreshAppeals } = useWorkbenchBadges();
+const { refresh: refreshBadges } = useWorkbenchBadges();
 
 const route = useRoute();
 const channel = ref(
@@ -439,6 +499,63 @@ const isAppealMail = computed(
     mail.value?.source === "appeal_mute",
 );
 
+// 申诉面板回复时要带的工单：只有未办结的工单才带 ticket_id
+//（已办结时后端不需要它，带上反而可能 409 TICKET_STALE）
+const appealTicketId = computed(() =>
+  isTicketOpen(ticket.value) ? ticket.value?.ticketId ?? null : null,
+);
+
+// ---- 历史提示（2.2.0 的 mail.hintQuotes[]）----
+// 官方发给玩家的每条消息下可以展开「那一次提示」：
+//   · 先用 hintQuotes[].mailId 精确匹配这一封（报价 / 改价邮件各自对应一行）；
+//   · 匹配不到（如「求提示答复」）取这封之前最近的一次报价 —— 答复正文就是那次报价暂存的答案；
+//   · consumedAt 有值 = 玩家确认扣费时采用的就是这条；supersededAt 有值 = 已被后续改价取代。
+const quoteOpenMailId = ref(null);
+
+function quotesForMessage(msg) {
+  const quotes = Array.isArray(mail.value?.hintQuotes) ? mail.value.hintQuotes : [];
+  if (!quotes.length) return [];
+
+  const exact = quotes.filter(
+    (q) => Number(q.mailId) === Number(msg?.mailId),
+  );
+  if (exact.length) return exact;
+
+  const at = new Date(msg?.createdAt || 0).getTime();
+  const before = quotes.filter(
+    (q) => new Date(q.createdAt || 0).getTime() <= at,
+  );
+  const pool = before.length ? before : quotes;
+  // 取 seq 最大的那次（= 这封之前最近的一次报价）
+  return [
+    pool.reduce((a, b) => (Number(b.seq) > Number(a.seq) ? b : a)),
+  ];
+}
+
+function quoteStatusText(q) {
+  if (q.consumedAt) return "已被采用";
+  if (q.supersededAt) return "已被改价取代";
+  if (
+    q.cost !== null &&
+    q.cost !== undefined &&
+    Number(q.cost) === Number(mail.value?.hint?.quotedCost)
+  ) {
+    return "当前报价";
+  }
+  return "历史";
+}
+
+function quoteTagType(q) {
+  if (q.consumedAt) return "success";
+  if (q.supersededAt) return "info";
+  if (Number(q.cost) === Number(mail.value?.hint?.quotedCost)) return "primary";
+  return "info";
+}
+
+function toggleQuoteFor(mailId) {
+  quoteOpenMailId.value = quoteOpenMailId.value === mailId ? null : mailId;
+}
+
 // ---- 工单派生状态 ----
 // 详情返回里可能只有顶层 ticketStatus、没有 ticket 对象（或反之），两者都认
 const drawerTicketStatus = computed(
@@ -507,11 +624,28 @@ const isOverdueRow = (row) =>
 const isSnippetHidden = (row) =>
   !row?.snippet && rowTicketStatus(row) === "processing" && !isMine(row);
 
+// 没接手就不许看详情：正文与附件只给当前的持单人。
+// 没有未办结工单的行不受限（公告、规则调整前的历史邮件、已办结的会话），否则这些只读邮件就打不开了。
+const canOpenRow = (row) => !isTicketOpen(row?.ticket) || isMine(row);
+const viewBlockedReason = (row) =>
+  rowTicketStatus(row) === "pending"
+    ? "该工单还没人接手：请先点「接手」再看详情"
+    : `该工单由 ${ticketAssigneeName(row?.ticket) || "其他 staff"} 处理中，无法查看详情`;
+
 const drawerTitle = computed(() => {
   const item = mail.value;
   if (!item) return "邮件";
   return `邮件 #${item.mailId} · ${item.subject || "（无主题）"}`;
 });
+
+// 行点击与「查看」共用同一个入口：没接手时只提示、不打开详情。
+function openRow(row) {
+  if (!canOpenRow(row)) {
+    ElMessage.warning(viewBlockedReason(row));
+    return;
+  }
+  return openMail(row);
+}
 
 async function openMail(row) {
   drawer.mailId = row.mailId;
@@ -522,6 +656,8 @@ async function openMail(row) {
   // 上一封的工单信息不能留到这一封上
   ticket.value = null;
   heldByOther.value = "";
+  // 展开中的「历史提示」也要跟着换邮件重置
+  quoteOpenMailId.value = null;
   await loadMessages();
 }
 
@@ -541,16 +677,16 @@ async function loadMessages() {
     mail.value = data?.mail || null;
     // 工单：这封自己的 ticket 优先，会话级 threadTicket 兜底（2.0 起详情就返回这两个）
     ticket.value = data?.mail?.ticket ?? data?.threadTicket ?? null;
-    // staff 打开详情时后端已经顺手接单：把结果同步回列表，界面不要还停在「待处理」
+    // 详情里的工单可能是刚接手后的状态：把结果同步回列表，界面不要还停在「待处理」
     syncViewedTicket(ticket.value);
-    // 渲染顺序：mail（当前打开这封，时间最新）在前，replyChain 按服务端顺序
-    //（时间倒序，最新祖先在前、链尾是根）跟在后面——旧信息排在时间新的正文之后。
+    // 渲染顺序改成「旧 → 新」（最新的在下方）：replyChain 是祖先链、时间倒序
+    //（最新祖先在前、链尾是根），反过来再接上当前这封就是了。
+    // 报价 / 答复之后会跳到新生成的那封（见 onSourceActionDone），新消息自然出现在最下面。
     const chain = Array.isArray(data?.replyChain) ? data.replyChain : [];
-    messages.value = [];
+    messages.value = [...chain].reverse();
     if (mail.value) {
       messages.value.push(mail.value);
     }
-    messages.value.push(...chain);
 
     // 打开（或手动刷新）一封未读邮件 → 逐封标已读。幂等，重复调用无副作用。
     const unreadId = Number(mail.value?.unread) === 1 ? mail.value.mailId : null;
@@ -604,7 +740,7 @@ function senderName(msg) {
 }
 
 // 回复：先把「点发送这一刻」的目标与工单固定下来，之后即使切走也不受影响。
-// 工单未办结时必须带 ticket_id；持单人由「打开详情即接单」确定（后端在 GET 里完成），
+// 工单未办结时必须带 ticket_id；持单人由列表里的「接手」确定（没接手也看不到详情，见 canOpenRow），
 // 所以这里不再补 claim —— 真正没接单时（如 admin 只读浏览）后端会 409，按错误提示接手即可。
 async function sendReply() {
   if (!canReply.value || !drawer.content.trim()) return;
@@ -633,8 +769,8 @@ async function sendReply() {
     }
     first().catch((err) => ElMessage.error(extractErrorMessage(err)));
     refreshTicketSummary();
-    // 回复即办结工单：侧栏角标（待处理 + 我处理中）要立刻减一，不等下一轮轮询
-    void refreshMails();
+    // 回复即办结工单：侧栏角标（open 数）要立刻减一，不等下一轮轮询
+    void refreshBadges();
   } catch (err) {
     const descriptor = describeTicketError(err);
     if (descriptor?.action === TICKET_ERROR_ACTION.RELOAD) {
@@ -655,13 +791,20 @@ async function sendReply() {
 
 // 提示 / 申诉面板动作完成：工单可能推进（报价、拒绝都会改状态），
 // 角标与分栏计数跟着动，并再拉一次详情拿最新的报价 / 申诉快照。
+// 这些动作还会**写一封新邮件**（报价 / 改价 / 处理结果 / 答复）：它是最新的子节点，
+// 不在当前这封的祖先链里，所以要把抽屉切到那封，否则「回复了却看不到回复邮件」。
+// 新邮件 id 各接口给的字段不同：quote / requote → quoteMailId，其余 → mailId。
 function onSourceActionDone(data) {
   if (data?.ticketStatus && ticket.value?.ticketId === data.ticketId) {
     ticket.value = { ...ticket.value, status: data.ticketStatus };
   }
-  // 角标：来信 / 求提示走工单计数，申诉走「等官方反馈」列表，两路都要重拉
-  void refreshMails();
-  void refreshAppeals();
+  const nextMailId = Number(data?.quoteMailId ?? data?.mailId ?? 0);
+  if (nextMailId > 0) {
+    drawer.mailId = nextMailId;
+    quoteOpenMailId.value = null;
+  }
+  // 角标：站内信 / 求提示 / 申诉已合并成一个数，重拉一次即可
+  void refreshBadges();
   refreshTicketSummary();
   void loadMessages();
 }
@@ -708,8 +851,8 @@ async function releaseCurrentTicket() {
     );
     first().catch(() => {});
     refreshTicketSummary();
-    // 强制退回后重新拉一次详情：被占用时只看到占位，现在正文可以读了
-    if (forced) void loadMessages();
+    // 没接手就不看详情：退出后本次打开的抽屉一并关掉（强制退回同理，退回后已不属于我）
+    drawer.visible = false;
   } finally {
     releasing.value = false;
   }
@@ -725,8 +868,9 @@ function patchRowTicket(row, ticket) {
   row.ticketStatus = ticket.status;
 }
 
-// 打开详情即占位接单（后端在 GET 里完成，admin 只读）：把服务端算好的工单同步到列表行，
-// 否则抽屉里已是「处理中 · 我」，背后那一行还挂着「接手」按钮（同一工单的多行一起改）。
+// 「接手」之后才会打开详情（没接手时列表已挡住「查看」）：
+// 把服务端返回的工单同步到列表行，否则抽屉里已是「处理中 · 我」，
+// 背后那一行还挂着「接手」按钮（同一工单的多行一起改）。
 function syncViewedTicket(current) {
   if (!current?.ticketId) return;
   let changed = false;
@@ -802,19 +946,26 @@ async function releaseRow(row) {
   }
 }
 
-onMounted(() => {
-  first().catch((err) => ElMessage.error(extractErrorMessage(err)));
+onMounted(async () => {
+  try {
+    // 先等列表回来：深链要按「这封的工单归谁」判断能不能打开
+    await first();
+  } catch (err) {
+    ElMessage.error(extractErrorMessage(err));
+  }
   refreshTicketSummary();
   startPolling();
   openMailFromQuery();
 });
 
-// ?mailId=：外部带邮件 id 跳过来时（如从处罚记录 / 通知里的深链），直接打开那封
+// ?mailId=：外部带邮件 id 跳过来时（如从处罚记录 / 通知里的深链），直接打开那封。
+// 列表里能查到这封时按工单归属判断（没接手不给看）；查不到（被默认筛选排除的历史邮件）
+// 就先打开，交给后端判权限。
 function openMailFromQuery() {
   const mailId = Number(route.query.mailId);
   if (!Number.isFinite(mailId) || mailId <= 0) return;
-  // 列表还没回来也没关系：详情接口只要 id，抽屉照常打开
-  void openMail({ mailId });
+  const row = list.value.find((item) => item.mailId === mailId);
+  return row ? openRow(row) : openMail({ mailId });
 }
 
 watch(
@@ -986,6 +1137,52 @@ onBeforeUnmount(() => {
   white-space: pre-wrap;
   word-break: break-all;
   font-size: 14px;
+}
+
+/* 官方 → 玩家消息下方的「查看历史提示」：靠右对齐，与气泡同侧 */
+.quote-toggle {
+  margin-top: 2px;
+  font-size: 12px;
+}
+
+/* 展开后的那次报价记录：序号 / 类型 / 价格 / 状态 + 当时暂存的答案 */
+.quote-history {
+  margin-top: 4px;
+  max-width: 80%;
+  padding: 8px 10px;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 6px;
+  background: var(--el-fill-color-blank);
+  text-align: left;
+}
+
+.quote-history__item + .quote-history__item {
+  margin-top: 8px;
+}
+
+.quote-history__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--el-text-color-regular);
+}
+
+.quote-history__seq {
+  color: var(--el-text-color-placeholder);
+  font-variant-numeric: tabular-nums;
+}
+
+.quote-history__reply {
+  margin: 6px 0 0;
+  padding: 8px 10px;
+  border-radius: 4px;
+  background: var(--el-fill-color-light);
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 .msg.to_player .msg-bubble {
   background: #ecf5ff;
