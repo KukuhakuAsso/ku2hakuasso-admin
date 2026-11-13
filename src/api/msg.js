@@ -133,22 +133,25 @@ export const getHintRequest = (id) => get(`/admin/msg/hint/${id}`);
 
 // 报价：{ cost(0..1000000 整数), reply(1..2000), ticket_id } —— 报价即受理，释放该队「待报价」名额。
 // 2.2.0 起每次报价都会写一封玩家可见的「求提示报价」邮件（只含价格，不含答案），
-// 响应新增 quoteId / quoteMailId。必须已接单并带上 ticket_id，否则 409。
+// 响应新增 quoteId / quoteMailId。工作台是整条会话视图，不拿这些 id 去取新邮件 ——
+// 动作完成后按会话根重取 threads/:rootId，新邮件自然出现在会话末尾。
+// 必须已接单并带上 ticket_id，否则 409。
 export const quoteHint = (id, body) =>
   post(`/admin/msg/hint/${id}/quote`, body);
 
 // 同意降价并改回答：{ cost(必须严格低于当前 quotedCost), reply(必填), ticket_id }
-// 写一封「求提示降价」邮件（新价 + 原价，不含答案）；响应新增 quoteId / quoteMailId。
+// 写一封「求提示降价」邮件（新价 + 原价，不含答案）；响应新增 quoteId / quoteMailId
+//（同报价：前端只按会话根重取，不用它定位新邮件）。
 export const requoteHint = (id, body) =>
   post(`/admin/msg/hint/${id}/requote`, body);
 
 // 拒绝降价：{ ticket_id }；不改价不改回答，只把当前报价标记为最低报价。
-// 写一封「求提示降价」邮件（当前已是最低报价）；响应新增 mailId。
+// 写一封「求提示降价」邮件（当前已是最低报价）；响应新增 mailId（同样只作信息）。
 export const declineCheaperHint = (id, body) =>
   post(`/admin/msg/hint/${id}/decline-cheaper`, body);
 
 // 拒绝求提示：{ reason?, ticket_id }；reason 可选、≤200；可拒绝 pending / quoted（未确认即未扣费）。
-// 写一封「求提示处理结果」邮件；响应新增 mailId。
+// 写一封「求提示处理结果」邮件；响应新增 mailId（同样只作信息）。
 export const rejectHint = (id, body) =>
   post(`/admin/msg/hint/${id}/reject`, body);
 

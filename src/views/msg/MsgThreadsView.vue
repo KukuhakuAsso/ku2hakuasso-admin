@@ -754,8 +754,11 @@ function collectQuotes(data) {
   return [...byKey.values()].sort((a, b) => Number(a.seq) - Number(b.seq));
 }
 
-// 兜底：hintQuotes / appeal / hint 目前只有单封详情（GET /mails/:id）下发，
-// 线程接口补齐之前，求提示 / 申诉会话缺哪样就补一次详情（只会各花一次请求）。
+// 兜底：hintQuotes / appeal / hint 目前只有单封详情（GET /mails/:id）下发 ——
+// /threads 的 thread 与 messages[] 都没有，threaded 列表行也只挂了 hint。
+// 所以只有求提示 / 申诉会话会缺这几样、缺哪样就补一次详情（各一次请求）；
+// 普通来信会话在这里直接 return，仍旧只有一个 threads 请求。
+// 后端把 hintQuotes / appeal 挂到线程消息后，need* 全为 false，这段自动失效。
 async function loadThreadExtras(seq, requestedId) {
   const needHint = source.value === "hint" && !hintSnapshot.value;
   const needQuotes = source.value === "hint" && !hintQuotes.value.length;
