@@ -225,6 +225,17 @@
           @release="releaseCurrentTicket"
         />
 
+        <!-- 只读查看：工单没归我时有只读权限的账号能看不能动 -->
+        <el-alert
+          v-if="viewOnly && !drawer.loading"
+          class="view-only-alert"
+          type="info"
+          :closable="false"
+          show-icon
+          title="只读查看"
+          :description="viewOnlyTip"
+        />
+
         <div v-if="drawer.loading" class="loading">
           <el-skeleton :rows="6" animated />
         </div>
@@ -305,6 +316,7 @@
           v-if="isHintMail"
           :hint="mail?.hint ?? null"
           :ticket-id="ticket?.ticketId ?? null"
+          :read-only="viewOnly"
           @done="onSourceActionDone"
           @conflict="onSourceConflict"
         />
@@ -312,6 +324,7 @@
           v-else-if="isAppealMail && mail?.appeal"
           :appeal="mail.appeal"
           :ticket-id="appealTicketId"
+          :read-only="viewOnly"
           @done="onSourceActionDone"
           @conflict="onSourceConflict"
         />
@@ -563,6 +576,19 @@ const drawerTicketStatus = computed(
 );
 // 我是不是这条工单的处理人
 const heldByMe = computed(() => isTicketMine(ticket.value, auth.account));
+// 只读预览：工单未办结但不归我（待处理 / 别人处理中），而当前账号有只读能力
+// （admin 或 msg.ticket.read）—— 能看正文与附件，回复 / 报价 / 回复申诉都必须先接手。
+const viewOnly = computed(
+  () => canReadOnlyTicket.value && isTicketOpen(ticket.value) && !heldByMe.value,
+);
+const viewOnlyTip = computed(() => {
+  if (drawerTicketStatus.value === "pending") {
+    return "该工单还没人接手：你可以查看正文，回复 / 报价 / 回复申诉请先接手。";
+  }
+  const holder = ticketAssigneeName(ticket.value) || "其他 staff";
+  return `该工单由 ${holder} 处理中：你可以查看正文，回复 / 报价 / 回复申诉需先接手（或由 admin 强制退回后再接手）。`;
+});
+
 // 未办结的工单只有持单人能动手：
 //   · 被其他 staff 持有 → 只读
 //   · 还没人接手（admin 的 GET 只读、不会自动接单）→ 也先挡住，否则写完回复才被后端 409 打回
@@ -624,9 +650,19 @@ const isOverdueRow = (row) =>
 const isSnippetHidden = (row) =>
   !row?.snippet && rowTicketStatus(row) === "processing" && !isMine(row);
 
+// 只读预览能力：admin 直通；staff 需要 msg.ticket.read（工单只读查看）。
+// 服务端的口径是「已持有对应处理权限 + 另有 msg.ticket.read」时，把待接单 / 被他人持有
+// 的详情从 403 降级为 200 readOnly:true —— 能看不能动，不占位、不回复、不执行工单动作。
+const canReadOnlyTicket = computed(
+  () => auth.isAdmin || auth.can("msg.ticket.read"),
+);
+
 // 没接手就不许看详情：正文与附件只给当前的持单人。
+// 例外是有只读权限的账号（admin / msg.ticket.read）：可以只读查看任何人手上的工单，
+// 但回复 / 报价 / 回复申诉都要先接手，抽屉里会挂只读提示（见 viewOnly）。
 // 没有未办结工单的行不受限（公告、规则调整前的历史邮件、已办结的会话），否则这些只读邮件就打不开了。
-const canOpenRow = (row) => !isTicketOpen(row?.ticket) || isMine(row);
+const canOpenRow = (row) =>
+  canReadOnlyTicket.value || !isTicketOpen(row?.ticket) || isMine(row);
 const viewBlockedReason = (row) =>
   rowTicketStatus(row) === "pending"
     ? "该工单还没人接手：请先点「接手」再看详情"
@@ -1046,6 +1082,11 @@ onBeforeUnmount(() => {
 /* 被他人持有：正文区换成占位说明，不再渲染任何邮件内容 */
 .held-placeholder {
   padding: 12px 0;
+}
+
+/* admin 只读查看的提示条：压掉默认外边距，别把工单条挤开 */
+.view-only-alert {
+  margin: 0;
 }
 
 /* 抽屉标题头：标题占满剩余宽度并在必要时省略，关闭按钮永远留在抽屉内。

@@ -27,6 +27,8 @@ const props = defineProps({
     hint: { type: Object, default: null },
     // 当前工单（未办结时动作要带 ticket_id）
     ticketId: { type: [Number, String], default: null },
+    // admin 只读查看（工单没归我）：只展示状态，不给报价 / 答复入口
+    readOnly: { type: Boolean, default: false },
 });
 const emit = defineEmits(["done", "conflict"]);
 
@@ -226,6 +228,10 @@ async function reject() {
         />
 
         <template v-else>
+            <p v-if="readOnly" class="tip">
+                只读查看：该工单未由你接手，接手后才能报价 / 答复。
+            </p>
+            <template v-else>
             <div v-if="canQuote || canRequote" class="hint-panel__form">
                 <div class="hint-panel__row">
                     <span class="hint-panel__label">点数</span>
@@ -297,6 +303,7 @@ async function reject() {
                     已拒绝：{{ hint?.reason || "—" }}
                 </span>
             </div>
+            </template>
         </template>
     </div>
 </template>

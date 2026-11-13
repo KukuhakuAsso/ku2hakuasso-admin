@@ -29,6 +29,8 @@ const props = defineProps({
     appeal: { type: Object, default: null },
     // 该主体未办结的申诉工单：回复要带 ticket_id，未接单时先 claim
     ticketId: { type: [Number, String], default: null },
+    // 只读查看（工单没归我，但账号有只读能力）：不回复，只保留解禁 / 解封这类处罚操作
+    readOnly: { type: Boolean, default: false },
 });
 const emit = defineEmits(["done", "conflict"]);
 
@@ -48,6 +50,7 @@ const kind = computed(() => props.appeal?.kind || "");
 const awaitingReply = computed(() => Boolean(props.appeal?.awaitingReply));
 const canReply = computed(
     () =>
+        !props.readOnly &&
         awaitingReply.value &&
         Boolean(targetId.value) &&
         (kind.value === "mute" ? auth.can("moderation.mute") : auth.isAdmin),
@@ -244,9 +247,11 @@ async function unban() {
         />
         <p v-else class="tip">
             {{
-                awaitingReply
-                    ? "当前账号没有回复这类申诉的权限（封禁申诉仅 admin，禁言申诉需 moderation.mute）。"
-                    : "该主体当前没有待回复的申诉。"
+                readOnly
+                    ? "只读查看：该申诉工单未由你接手，接手后才能回复申诉。"
+                    : awaitingReply
+                      ? "当前账号没有回复这类申诉的权限（封禁申诉仅 admin，禁言申诉需 moderation.mute）。"
+                      : "该主体当前没有待回复的申诉。"
             }}
         </p>
 
