@@ -722,8 +722,8 @@ async function openMail(row) {
   await loadMessages();
 }
 
-// 会话里的 hint 快照：线程消息上（后端补齐后）优先，其次列表行 ——
-// threaded 行顶层带 hint，/threads 的 thread 里暂时没有。
+// 会话里的 hint 快照：后端在 messages[] 上给（每封都带同形快照）；列表行也挂着同一个，
+// 深链 / 后端还没补时用它兜底（本地数据，不发请求）。
 function pickHint(msgs) {
   const hit = msgs.find((item) => item?.hint);
   if (hit) return hit.hint;
@@ -737,6 +737,7 @@ function pickAppeal(msgs) {
 }
 
 // 报价记录按会话汇总：线程消息 / thread 上挂的 hintQuotes[] 合并去重，按 seq 升序
+//（同一次报价可能在多封邮件上都带一遍，按 quoteId 去重）
 function collectQuotes(data) {
   const pools = [];
   for (const item of data?.messages ?? []) {
@@ -752,35 +753,6 @@ function collectQuotes(data) {
     if (!byKey.has(key)) byKey.set(key, quote);
   }
   return [...byKey.values()].sort((a, b) => Number(a.seq) - Number(b.seq));
-}
-
-// 兜底：hintQuotes / appeal / hint 目前只有单封详情（GET /mails/:id）下发 ——
-// /threads 的 thread 与 messages[] 都没有，threaded 列表行也只挂了 hint。
-// 所以只有求提示 / 申诉会话会缺这几样、缺哪样就补一次详情（各一次请求）；
-// 普通来信会话在这里直接 return，仍旧只有一个 threads 请求。
-// 后端把 hintQuotes / appeal 挂到线程消息后，need* 全为 false，这段自动失效。
-async function loadThreadExtras(seq, requestedId) {
-  const needHint = source.value === "hint" && !hintSnapshot.value;
-  const needQuotes = source.value === "hint" && !hintQuotes.value.length;
-  const needAppeal = isAppealMail.value && !appealSnapshot.value;
-  if (!needHint && !needQuotes && !needAppeal) return;
-
-  const target = latestMail.value;
-  if (!target?.mailId) return;
-  try {
-    const one = await getMail(target.mailId);
-    // 期间切走了：别把这一次的结果贴到别的会话上
-    if (seq !== detailSeq || requestedId !== drawer.mailId) return;
-    if (needHint) hintSnapshot.value = one?.mail?.hint ?? null;
-    if (needQuotes) {
-      hintQuotes.value = Array.isArray(one?.mail?.hintQuotes)
-        ? one.mail.hintQuotes
-        : [];
-    }
-    if (needAppeal) appealSnapshot.value = one?.mail?.appeal ?? null;
-  } catch {
-    // 兜底失败就把快照留空：动作面板会给出对应提示，不影响正文阅读
-  }
 }
 
 async function loadMessages() {
@@ -806,11 +778,10 @@ async function loadMessages() {
     latestMail.value = items.length ? items[items.length - 1] : null;
     // 工单：会话级 thread.ticket 优先，列表行的快照兜底
     ticket.value = data?.thread?.ticket ?? listTicketFor(requestedId) ?? null;
+    // 求提示 / 申诉需要的 hint、hintQuotes、appeal 都由 messages[] 带回来，不再补单封详情
     hintQuotes.value = collectQuotes(data);
     hintSnapshot.value = pickHint(items);
     appealSnapshot.value = pickAppeal(items);
-    await loadThreadExtras(seq, requestedId);
-    if (seq !== detailSeq || requestedId !== drawer.mailId) return;
 
     // 详情里的工单可能是刚接手后的状态：把结果同步回列表，界面不要还停在「待处理」
     syncViewedTicket(ticket.value);

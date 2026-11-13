@@ -43,6 +43,9 @@ export const listMails = (params) => get("/admin/msg/mails", params);
 
 // 整条会话（工作台详情）：thread（会话信息 + ticket）+ messages[]（按时间**升序**，
 // 每封都带正文与附件）+ hasMore / nextBeforeId（向更早翻页）+ readOnly。
+// 求提示 / 申诉相关的份量也都在会话里：每封另带 hint（求提示 7 字段快照）、
+// hintQuotes[]（历次报价 + 该次暂存答案）、appeal（申诉 6 字段快照）——
+// 工作台的动作面板与「查看历史提示」直接读这里，不用再补一次单封详情。
 // 2.2.0 起**纯读、不自动接单**；readOnly=true = 只读预览（有处理权限 + msg.ticket.read，
 // 或 admin 看别人手上的工单），此时能看正文但不能回复 / 报价 / 回复申诉。
 // rootId 只认会话根（拿中间某一封的 id 会 404）；mark_read 目前必须显式传 1，
@@ -51,10 +54,10 @@ export const getThread = (rootId, params) =>
   get(`/admin/msg/threads/${rootId}`, { mark_read: 1, ...params });
 
 // 单封邮件详情：mail（请求的那封自己）+ replyChain（祖先链，时间倒序、不含后续回复）。
-// 工作台详情已改用 getThread()，这里留给「深链进来的 id 不是会话根」时反查根 id。
+// 工作台详情已改用 getThread()，这里只留给「深链进来的 id 不是会话根」时反查根 id。
 // 口径同 getThread：纯读、须先 claim，并返回 ticket / threadTicket、readOnly、
-// mail.appeal（申诉 6 字段快照，非申诉为 null）、mail.hint（求提示快照）、
-// mail.hintQuotes[]（历次报价及其暂存答案，仅管理端）—— 后两个目前只有这里有。
+// mail.appeal（申诉 6 字段快照）、mail.hint（求提示快照）、mail.hintQuotes[]——
+// 这三样 getThread 的 messages[] 上也有，工作台不再依赖本接口取它们。
 export const getMail = (id) => get(`/admin/msg/mails/${id}`);
 
 // 官方回复：主题由服务端生成（回复：<根主题>），正文之外要带 ticket_id
