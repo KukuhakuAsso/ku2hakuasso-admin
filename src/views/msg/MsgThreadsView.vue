@@ -59,7 +59,7 @@
       stripe
       @row-click="openRow"
     >
-      <el-table-column prop="mailId" label="邮件ID" width="90" />
+      <el-table-column prop="mailId" label="会话" width="90" />
       <el-table-column label="主题" min-width="240">
         <template #default="{ row }">
           <div class="subject-cell">
@@ -68,12 +68,12 @@
               {{ row.subject || "（无主题）" }}
             </span>
             <el-tag
-              v-if="row.replyCount"
+              v-if="row.thread?.messageCount > 1"
               size="small"
               type="info"
               class="reply-count"
             >
-              {{ row.replyCount }} 条回复
+              共 {{ row.thread.messageCount }} 封 · {{ row.replyCount }} 条回复
             </el-tag>
             <p v-if="row.snippet" class="snippet">{{ row.snippet }}</p>
             <p v-else-if="isSnippetHidden(row)" class="hidden-tip">
@@ -120,14 +120,13 @@
           <template v-else>全体玩家</template>
         </template>
       </el-table-column>
-      <el-table-column label="方向" width="100">
-        <template #default="{ row }">
-          {{ row.direction === "to_staff" ? "玩家 → 官方" : "官方 → 玩家" }}
-        </template>
-      </el-table-column>
       <el-table-column label="未读" width="80">
         <template #default="{ row }">
-          <el-badge v-if="row.unread > 0" :value="row.unread" type="danger" />
+          <el-badge
+            v-if="rowUnread(row) > 0"
+            :value="rowUnread(row)"
+            type="danger"
+          />
           <span v-else>—</span>
         </template>
       </el-table-column>
@@ -195,7 +194,7 @@
       @next="next"
     />
 
-    <!-- 邮件详情抽屉：mail（当前这封）+ replyChain（它回复过的链）+ 官方回复 -->
+    <!-- 邮件详情抽屉：整条会话（thread + messages，升序）+ 官方回复 -->
     <el-drawer v-model="drawer.visible" size="620px">
       <template #header>
         <!-- 自定义标题头：主题可能很长（甚至没有空格），必须能截断，
@@ -207,13 +206,15 @@
       <div class="mail-detail">
         <div class="mail-meta">
           <span class="label">主题</span>
-          <span>{{ mail?.subject || "（无主题）" }}</span>
+          <span>{{ thread?.subject || "（无主题）" }}</span>
+          <span class="label">共</span>
+          <span>{{ thread?.messageCount ?? messages.length }} 封</span>
         </div>
         <div class="mail-meta">
           <span class="label">频道</span>
-          <span>{{ mail?.channelName || "—" }}</span>
+          <span>{{ thread?.channelName || "—" }}</span>
           <span class="label">来源</span>
-          <span>{{ statusMeta(mail?.source, MAIL_SOURCE).label }}</span>
+          <span>{{ statusMeta(source, MAIL_SOURCE).label }}</span>
         </div>
 
         <TicketBar
@@ -314,15 +315,15 @@
         <!-- 求提示 / 申诉的邮件不再走普通回复：动作在各自面板里（原两个工作台并入这里） -->
         <HintActionPanel
           v-if="isHintMail"
-          :hint="mail?.hint ?? null"
+          :hint="hintSnapshot"
           :ticket-id="ticket?.ticketId ?? null"
           :read-only="viewOnly"
           @done="onSourceActionDone"
           @conflict="onSourceConflict"
         />
         <AppealActionPanel
-          v-else-if="isAppealMail && mail?.appeal"
-          :appeal="mail.appeal"
+          v-else-if="isAppealMail && appealSnapshot"
+          :appeal="appealSnapshot"
           :ticket-id="appealTicketId"
           :read-only="viewOnly"
           @done="onSourceActionDone"
@@ -372,9 +373,9 @@ import { useRoute } from "vue-router";
 import { useAuthStore } from "@/stores/auth";
 import {
   getMail,
+  getThread,
   getTicketSummary,
   listMails,
-  markMailRead,
   replyMail,
 } from "@/api/msg";
 import { useCursorPage } from "@/composables/useCursorPage";
@@ -425,11 +426,12 @@ const ticketOverdue = ref(false);
 // 分栏计数：待处理 / 处理中 / 超时 / 我处理中。轮询只刷它，不动列表。
 const ticketSummary = ref(null);
 
-// 列队用邮件式接口：每条记录一行，倒序游标分页
+// 列队用邮件式接口：threaded=1 一条会话一行（工单本身是按会话管的），倒序游标分页
 const fetcher = (cursor) =>
   listMails({
     cursor,
     limit: 20,
+    threaded: 1,
     channel: channel.value || undefined,
     only_unread: onlyUnread.value || undefined,
     ticket_status: ticketStatus.value || undefined,
@@ -443,17 +445,27 @@ const fetcher = (cursor) =>
 const { list, page, hasMore, loading, first, next, prev } =
   useCursorPage(fetcher);
 
-// ---- 邮件详情 ----
+// ---- 邮件详情（整条会话）----
 const drawer = reactive({
   visible: false,
   loading: false,
   sending: false,
+  // 会话根邮件 id：threads/:rootId 只认根，threaded 行的 mailId 就是根
   mailId: null,
   content: "",
 });
-const mail = ref(null);
+// 会话信息（threads 返回的 thread）与全部邮件（服务端按时间升序给出，最新在最后）
+const thread = ref(null);
 const messages = ref([]);
-// 当前详情对应的工单：详情接口返回 mail.ticket（没有时用 threadTicket 兜底）
+// 会话最新一封：底部动作面板与「回复」都以它为准
+const latestMail = ref(null);
+// 服务端判定的只读预览（处理权限 + msg.ticket.read，或 admin 看别人手上的工单）
+const readOnly = ref(false);
+// 求提示的报价记录 / 提示快照 / 申诉快照：都按会话聚合，见 loadMessages
+const hintQuotes = ref([]);
+const hintSnapshot = ref(null);
+const appealSnapshot = ref(null);
+// 当前详情对应的工单：threads 返回 thread.ticket
 const ticket = ref(null);
 // 被其他 staff 持有时后端返回 403（TICKET_HELD_BY_OTHER）：只记处理人名，正文不显示
 const heldByOther = ref("");
@@ -471,7 +483,7 @@ function startPolling() {
     refreshTicketSummary();
 
     // 抽屉打开时一律不刷新列表：操作员正在读对话 / 写回复，界面不该自己变
-    //（自动替换 mail + replyChain 会让人读一半内容跳掉）。关掉抽屉后下一轮自动继续。
+    //（自动替换整条会话会让人读一半内容跳掉）。关掉抽屉后下一轮自动继续。
     // 抽屉里的「刷新」按钮仍然可以手动拉最新。
     if (drawer.visible) return;
 
@@ -501,15 +513,16 @@ function stopPolling() {
   }
 }
 
-// ---- 邮件来源决定抽屉底部用哪个动作面板（提示 / 申诉已并入本页）----
+// ---- 会话来源决定抽屉底部用哪个动作面板（提示 / 申诉已并入本页）----
 // 求提示邮件不能走普通回复（后端 403），必须在提示面板里报价 / 答复；
-// 申诉邮件优先用申诉面板（回复要经 appeal 接口才会解锁下一条申诉），
-// 后端还没下发 appeal 快照时回退到普通回复框，免得完全没法回。
-const isHintMail = computed(() => mail.value?.source === "hint");
+// 申诉邮件必须走申诉面板（回复要经 appeal 接口才会解锁下一条申诉）。
+// 来源取整条会话的：会话里每封的 source 相同，用 thread 更稳（深链时不必等消息回来）。
+const source = computed(
+  () => thread.value?.source ?? latestMail.value?.source ?? "",
+);
+const isHintMail = computed(() => source.value === "hint");
 const isAppealMail = computed(
-  () =>
-    mail.value?.source === "appeal_ban" ||
-    mail.value?.source === "appeal_mute",
+  () => source.value === "appeal_ban" || source.value === "appeal_mute",
 );
 
 // 申诉面板回复时要带的工单：只有未办结的工单才带 ticket_id
@@ -518,7 +531,7 @@ const appealTicketId = computed(() =>
   isTicketOpen(ticket.value) ? ticket.value?.ticketId ?? null : null,
 );
 
-// ---- 历史提示（2.2.0 的 mail.hintQuotes[]）----
+// ---- 历史提示（2.2.0 的 hintQuotes[]，按会话聚合到 hintQuotes）----
 // 官方发给玩家的每条消息下可以展开「那一次提示」：
 //   · 先用 hintQuotes[].mailId 精确匹配这一封（报价 / 改价邮件各自对应一行）；
 //   · 匹配不到（如「求提示答复」）取这封之前最近的一次报价 —— 答复正文就是那次报价暂存的答案；
@@ -526,7 +539,7 @@ const appealTicketId = computed(() =>
 const quoteOpenMailId = ref(null);
 
 function quotesForMessage(msg) {
-  const quotes = Array.isArray(mail.value?.hintQuotes) ? mail.value.hintQuotes : [];
+  const quotes = hintQuotes.value;
   if (!quotes.length) return [];
 
   const exact = quotes.filter(
@@ -551,7 +564,7 @@ function quoteStatusText(q) {
   if (
     q.cost !== null &&
     q.cost !== undefined &&
-    Number(q.cost) === Number(mail.value?.hint?.quotedCost)
+    Number(q.cost) === Number(hintSnapshot.value?.quotedCost)
   ) {
     return "当前报价";
   }
@@ -561,7 +574,7 @@ function quoteStatusText(q) {
 function quoteTagType(q) {
   if (q.consumedAt) return "success";
   if (q.supersededAt) return "info";
-  if (Number(q.cost) === Number(mail.value?.hint?.quotedCost)) return "primary";
+  if (Number(q.cost) === Number(hintSnapshot.value?.quotedCost)) return "primary";
   return "info";
 }
 
@@ -572,14 +585,17 @@ function toggleQuoteFor(mailId) {
 // ---- 工单派生状态 ----
 // 详情返回里可能只有顶层 ticketStatus、没有 ticket 对象（或反之），两者都认
 const drawerTicketStatus = computed(
-  () => ticket.value?.status || mail.value?.ticket?.status || "",
+  () => ticket.value?.status || thread.value?.ticket?.status || "",
 );
 // 我是不是这条工单的处理人
 const heldByMe = computed(() => isTicketMine(ticket.value, auth.account));
-// 只读预览：工单未办结但不归我（待处理 / 别人处理中），而当前账号有只读能力
-// （admin 或 msg.ticket.read）—— 能看正文与附件，回复 / 报价 / 回复申诉都必须先接手。
+// 只读预览：服务端回 readOnly:true 就是只读；另外 admin / msg.ticket.read 看别人手上的
+// 未办结工单也只读（后端对 admin 的 GET 放行但不置 readOnly）—— 能看正文与附件，
+// 回复 / 报价 / 回复申诉都必须先接手。
 const viewOnly = computed(
-  () => canReadOnlyTicket.value && isTicketOpen(ticket.value) && !heldByMe.value,
+  () =>
+    readOnly.value ||
+    (canReadOnlyTicket.value && isTicketOpen(ticket.value) && !heldByMe.value),
 );
 const viewOnlyTip = computed(() => {
   if (drawerTicketStatus.value === "pending") {
@@ -608,9 +624,9 @@ const forcingRelease = computed(
 
 // 公告只读；求提示邮件必须走报价流程；工单被他人持有时也不能回复
 const canReply = computed(() => {
-  const item = mail.value;
-  if (!item?.canReply) return false;
-  if (item.source === "hint") return false;
+  const replyable = latestMail.value?.canReply ?? thread.value?.canReply;
+  if (!replyable) return false;
+  if (source.value === "hint") return false;
   if (blockedByTicket.value) return false;
   return auth.can("msg.feedback.handle");
 });
@@ -619,8 +635,8 @@ const replyBlockedReason = computed(() => {
   if (heldByOther.value) {
     return `该工单已被 ${heldByOther.value} 接手，正文与附件不可见。`;
   }
-  if (!mail.value) return "邮件未加载。";
-  if (mail.value.source === "hint") {
+  if (!thread.value) return "邮件未加载。";
+  if (source.value === "hint") {
     return "求提示邮件请用底部的「提示」面板报价 / 答复，不能直接回复。";
   }
   if (blockedByTicket.value) {
@@ -633,6 +649,8 @@ const replyBlockedReason = computed(() => {
 
 // ---- 列表行的工单派生 ----
 const rowTicketStatus = (row) => row?.ticketStatus || row?.ticket?.status || "";
+// 会话未读数：threaded 行给的是 thread.unreadCount（整条会话的未读）
+const rowUnread = (row) => Number(row?.thread?.unreadCount ?? row?.unread ?? 0);
 const isMine = (row) => isTicketMine(row?.ticket, auth.account);
 // admin 可以强制退回他人工单（回复仍要先自己接手）
 const canForceReleaseRow = (row) =>
@@ -669,9 +687,10 @@ const viewBlockedReason = (row) =>
     : `该工单由 ${ticketAssigneeName(row?.ticket) || "其他 staff"} 处理中，无法查看详情`;
 
 const drawerTitle = computed(() => {
-  const item = mail.value;
-  if (!item) return "邮件";
-  return `邮件 #${item.mailId} · ${item.subject || "（无主题）"}`;
+  const current = thread.value;
+  if (!current) return "会话";
+  const rootId = current.rootMailId ?? drawer.mailId;
+  return `会话 #${rootId} · ${current.subject || "（无主题）"}`;
 });
 
 // 行点击与「查看」共用同一个入口：没接手时只提示、不打开详情。
@@ -684,21 +703,85 @@ function openRow(row) {
 }
 
 async function openMail(row) {
-  drawer.mailId = row.mailId;
+  // 列表行给的是会话根（threaded 行 mailId == rootMailId）
+  drawer.mailId = Number(row.rootMailId ?? row.mailId);
   drawer.content = "";
   drawer.visible = true;
-  mail.value = null;
+  thread.value = null;
   messages.value = [];
-  // 上一封的工单信息不能留到这一封上
+  latestMail.value = null;
+  readOnly.value = false;
+  hintQuotes.value = [];
+  hintSnapshot.value = null;
+  appealSnapshot.value = null;
+  // 上一封的工单信息不能留到这一条会话上
   ticket.value = null;
   heldByOther.value = "";
-  // 展开中的「历史提示」也要跟着换邮件重置
+  // 展开中的「历史提示」也要跟着换会话重置
   quoteOpenMailId.value = null;
   await loadMessages();
 }
 
+// 会话里的 hint 快照：线程消息上（后端补齐后）优先，其次列表行 ——
+// threaded 行顶层带 hint，/threads 的 thread 里暂时没有。
+function pickHint(msgs) {
+  const hit = msgs.find((item) => item?.hint);
+  if (hit) return hit.hint;
+  const row = list.value.find((item) => item.mailId === drawer.mailId);
+  return row?.hint ?? row?.thread?.hint ?? null;
+}
+
+// 申诉 6 字段快照：线程消息里任取一条非空的
+function pickAppeal(msgs) {
+  return msgs.find((item) => item?.appeal)?.appeal ?? null;
+}
+
+// 报价记录按会话汇总：线程消息 / thread 上挂的 hintQuotes[] 合并去重，按 seq 升序
+function collectQuotes(data) {
+  const pools = [];
+  for (const item of data?.messages ?? []) {
+    if (Array.isArray(item?.hintQuotes)) pools.push(...item.hintQuotes);
+  }
+  if (Array.isArray(data?.thread?.hintQuotes)) {
+    pools.push(...data.thread.hintQuotes);
+  }
+  const byKey = new Map();
+  for (const quote of pools) {
+    if (!quote) continue;
+    const key = quote.quoteId ?? `${quote.seq}:${quote.cost}:${quote.mailId}`;
+    if (!byKey.has(key)) byKey.set(key, quote);
+  }
+  return [...byKey.values()].sort((a, b) => Number(a.seq) - Number(b.seq));
+}
+
+// 兜底：hintQuotes / appeal / hint 目前只有单封详情（GET /mails/:id）下发，
+// 线程接口补齐之前，求提示 / 申诉会话缺哪样就补一次详情（只会各花一次请求）。
+async function loadThreadExtras(seq, requestedId) {
+  const needHint = source.value === "hint" && !hintSnapshot.value;
+  const needQuotes = source.value === "hint" && !hintQuotes.value.length;
+  const needAppeal = isAppealMail.value && !appealSnapshot.value;
+  if (!needHint && !needQuotes && !needAppeal) return;
+
+  const target = latestMail.value;
+  if (!target?.mailId) return;
+  try {
+    const one = await getMail(target.mailId);
+    // 期间切走了：别把这一次的结果贴到别的会话上
+    if (seq !== detailSeq || requestedId !== drawer.mailId) return;
+    if (needHint) hintSnapshot.value = one?.mail?.hint ?? null;
+    if (needQuotes) {
+      hintQuotes.value = Array.isArray(one?.mail?.hintQuotes)
+        ? one.mail.hintQuotes
+        : [];
+    }
+    if (needAppeal) appealSnapshot.value = one?.mail?.appeal ?? null;
+  } catch {
+    // 兜底失败就把快照留空：动作面板会给出对应提示，不影响正文阅读
+  }
+}
+
 async function loadMessages() {
-  // 先记下这次要请求的邮件：响应回来时据此判断是否已被替换
+  // 先记下这次要请求的会话：响应回来时据此判断是否已被替换
   const requestedId = drawer.mailId;
   if (!requestedId) return;
 
@@ -706,27 +789,35 @@ async function loadMessages() {
   drawer.loading = true;
   heldByOther.value = "";
   try {
-    const data = await getMail(requestedId);
-    // 已经切到别的邮件、或已有更新的请求 → 丢弃这次响应
+    // mark_read=1 由 getThread 带上：打开会话即把整条会话标已读（幂等）
+    const data = await getThread(requestedId);
+    // 已经切到别的会话、或已有更新的请求 → 丢弃这次响应
     if (seq !== detailSeq || requestedId !== drawer.mailId) return;
 
-    mail.value = data?.mail || null;
-    // 工单：这封自己的 ticket 优先，会话级 threadTicket 兜底（2.0 起详情就返回这两个）
-    ticket.value = data?.mail?.ticket ?? data?.threadTicket ?? null;
+    thread.value = data?.thread ?? null;
+    readOnly.value = Boolean(data?.readOnly);
+    // messages 由服务端按时间升序给出（旧 → 新），最新一封在最后；报价 / 改价 / 答复
+    // 产生的子邮件会自动出现在这里，不必再像单封详情那样「切到新邮件」。
+    const items = Array.isArray(data?.messages) ? data.messages : [];
+    messages.value = items;
+    latestMail.value = items.length ? items[items.length - 1] : null;
+    // 工单：会话级 thread.ticket 优先，列表行的快照兜底
+    ticket.value = data?.thread?.ticket ?? listTicketFor(requestedId) ?? null;
+    hintQuotes.value = collectQuotes(data);
+    hintSnapshot.value = pickHint(items);
+    appealSnapshot.value = pickAppeal(items);
+    await loadThreadExtras(seq, requestedId);
+    if (seq !== detailSeq || requestedId !== drawer.mailId) return;
+
     // 详情里的工单可能是刚接手后的状态：把结果同步回列表，界面不要还停在「待处理」
     syncViewedTicket(ticket.value);
-    // 渲染顺序改成「旧 → 新」（最新的在下方）：replyChain 是祖先链、时间倒序
-    //（最新祖先在前、链尾是根），反过来再接上当前这封就是了。
-    // 报价 / 答复之后会跳到新生成的那封（见 onSourceActionDone），新消息自然出现在最下面。
-    const chain = Array.isArray(data?.replyChain) ? data.replyChain : [];
-    messages.value = [...chain].reverse();
-    if (mail.value) {
-      messages.value.push(mail.value);
-    }
 
-    // 打开（或手动刷新）一封未读邮件 → 逐封标已读。幂等，重复调用无副作用。
-    const unreadId = Number(mail.value?.unread) === 1 ? mail.value.mailId : null;
-    if (unreadId) void markActiveRead(unreadId);
+    // 整条会话已由服务端标已读：本地跟着清掉未读标记（列表行与 thread 内的计数）
+    for (const item of list.value) {
+      if (item.mailId !== requestedId) continue;
+      item.unread = 0;
+      if (item.thread) item.thread.unreadCount = 0;
+    }
   } catch (err) {
     // 被替换的请求失败不打扰操作员
     if (seq !== detailSeq || requestedId !== drawer.mailId) return;
@@ -735,8 +826,9 @@ async function loadMessages() {
     const descriptor = describeTicketError(err);
     if (descriptor?.action === TICKET_ERROR_ACTION.HELD) {
       heldByOther.value = descriptor.holder;
-      mail.value = null;
+      thread.value = null;
       messages.value = [];
+      latestMail.value = null;
       ticket.value = {
         ...(listTicketFor(drawer.mailId) || {}),
         ...(descriptor.ticket || { status: "processing" }),
@@ -747,24 +839,6 @@ async function loadMessages() {
     ElMessage.error(extractErrorMessage(err));
   } finally {
     if (seq === detailSeq) drawer.loading = false;
-  }
-}
-
-// 逐封已读：只清掉这一封的标记（列表里那一行的未读也随之归零）。
-// mailId 由调用方显式传入，不在 await 之后读 drawer.mailId —— 那时可能已经切到别的邮件。
-async function markActiveRead(mailId) {
-  try {
-    await markMailRead(mailId);
-    if (mail.value?.mailId === mailId) {
-      mail.value.unread = 0;
-    }
-    for (const item of list.value) {
-      if (item.mailId === mailId) {
-        item.unread = 0;
-      }
-    }
-  } catch {
-    // 标记失败不打扰操作员：正文已经打开了，下次刷新会重新对齐未读状态
   }
 }
 
@@ -781,7 +855,9 @@ function senderName(msg) {
 async function sendReply() {
   if (!canReply.value || !drawer.content.trim()) return;
 
-  const targetId = drawer.mailId;
+  // 回复接在会话末尾：最新一封就是对话的最后一条（threads 里的最后一项）
+  const sessionId = drawer.mailId;
+  const targetId = latestMail.value?.mailId ?? sessionId;
   const content = drawer.content.trim();
   const activeTicket = isTicketOpen(ticket.value) ? ticket.value : null;
   const body = activeTicket
@@ -798,8 +874,8 @@ async function sendReply() {
       ticket.value = { ...ticket.value, status: data.ticketStatus };
     }
     // 回复成功后自动关闭抽屉，回到列表并刷新（反映新回复与未读状态）；
-    // 期间已切到别的邮件时，不要清空正文或关掉当前这个抽屉
-    if (targetId === drawer.mailId) {
+    // 期间已切到别的会话时，不要清空正文或关掉当前这个抽屉
+    if (sessionId === drawer.mailId) {
       drawer.content = "";
       drawer.visible = false;
     }
@@ -814,10 +890,10 @@ async function sendReply() {
       ElMessage.warning(descriptor.message);
       first().catch(() => {});
       refreshTicketSummary();
-      if (targetId === drawer.mailId) void loadMessages();
+      if (sessionId === drawer.mailId) void loadMessages();
       return;
     }
-    if (targetId === drawer.mailId) {
+    if (sessionId === drawer.mailId) {
       ElMessage.error(descriptor?.message || extractErrorMessage(err));
     }
   } finally {
@@ -826,19 +902,15 @@ async function sendReply() {
 }
 
 // 提示 / 申诉面板动作完成：工单可能推进（报价、拒绝都会改状态），
-// 角标与分栏计数跟着动，并再拉一次详情拿最新的报价 / 申诉快照。
-// 这些动作还会**写一封新邮件**（报价 / 改价 / 处理结果 / 答复）：它是最新的子节点，
-// 不在当前这封的祖先链里，所以要把抽屉切到那封，否则「回复了却看不到回复邮件」。
-// 新邮件 id 各接口给的字段不同：quote / requote → quoteMailId，其余 → mailId。
+// 角标与分栏计数跟着动，并再拉一次会话拿最新的报价 / 申诉快照与那封新邮件。
+// 这些动作会**写一封新邮件**（报价 / 改价 / 处理结果 / 答复）：它是这条会话的子节点，
+// threads/:rootId 会一并带回来，所以直接从会话根重取即可。
 function onSourceActionDone(data) {
   if (data?.ticketStatus && ticket.value?.ticketId === data.ticketId) {
     ticket.value = { ...ticket.value, status: data.ticketStatus };
   }
-  const nextMailId = Number(data?.quoteMailId ?? data?.mailId ?? 0);
-  if (nextMailId > 0) {
-    drawer.mailId = nextMailId;
-    quoteOpenMailId.value = null;
-  }
+  // 旧邮件被取代 / 新增一封之后，展开中的报价历史先收起，避免展开在过期的消息上
+  quoteOpenMailId.value = null;
   // 角标：站内信 / 求提示 / 申诉已合并成一个数，重拉一次即可
   void refreshBadges();
   refreshTicketSummary();
@@ -994,14 +1066,38 @@ onMounted(async () => {
   openMailFromQuery();
 });
 
-// ?mailId=：外部带邮件 id 跳过来时（如从处罚记录 / 通知里的深链），直接打开那封。
-// 列表里能查到这封时按工单归属判断（没接手不给看）；查不到（被默认筛选排除的历史邮件）
-// 就先打开，交给后端判权限。
-function openMailFromQuery() {
+// ?mailId=：外部带邮件 id 跳过来时（如从处罚记录 / 通知里的深链），打开那封所在的会话。
+// 列表里能查到这条会话时按工单归属判断（没接手不给看）；查不到（被默认筛选排除的历史邮件、
+// 或带的是会话中间某一封的 id）先反查会话根，再交给后端判权限。
+function threadMatches(row, mailId) {
+  return (
+    Number(row?.mailId) === mailId ||
+    Number(row?.rootMailId) === mailId ||
+    Number(row?.thread?.rootMailId) === mailId
+  );
+}
+
+// threads/:rootId 只认会话根；深链可能带中间某一封的 id，用单封详情换出根 id。
+// 换不到（无权限 / 已删除）就按原 id 打开，让后端给出具体错误。
+async function resolveRootId(mailId) {
+  try {
+    const data = await getMail(mailId);
+    return Number(data?.mail?.rootMsgId ?? data?.mail?.mailId ?? 0) || mailId;
+  } catch {
+    return mailId;
+  }
+}
+
+async function openMailFromQuery() {
   const mailId = Number(route.query.mailId);
   if (!Number.isFinite(mailId) || mailId <= 0) return;
-  const row = list.value.find((item) => item.mailId === mailId);
-  return row ? openRow(row) : openMail({ mailId });
+  const row = list.value.find((item) => threadMatches(item, mailId));
+  if (row) return openRow(row);
+
+  const rootId = await resolveRootId(mailId);
+  // 反查期间用户可能又点了别的会话
+  if (Number(route.query.mailId) !== mailId) return;
+  return openMail({ mailId: rootId });
 }
 
 watch(

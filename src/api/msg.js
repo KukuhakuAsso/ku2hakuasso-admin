@@ -20,28 +20,41 @@ export const getTicketSummary = () => get("/admin/msg/tickets/summary");
 // 权限按工单 kind（appeal_ban 仅 admin、appeal_mute 需 moderation.mute）。
 // staff 不能抢占他人处理中的工单：改派只能由 admin 先 release 再 claim，计时不重置。
 export const claimTicket = (ticketId) =>
-    post(`/admin/msg/tickets/${ticketId}/claim`);
+  post(`/admin/msg/tickets/${ticketId}/claim`);
 
 // 退出 / 标记未处理（processing → pending 并清处理人；admin 可强制退回他人）。
 // 注意：退出后待处理计时不重置，超时仍按最初来信时间计算。
 export const releaseTicket = (ticketId) =>
-    post(`/admin/msg/tickets/${ticketId}/release`);
+  post(`/admin/msg/tickets/${ticketId}/release`);
 
 // ---------- 站内信工作台（邮件式，2026-10-14 起取代旧的 /msg/threads） ----------
 
-// 邮件列表：每条发信一行，只给主题与来源，正文要点进详情。
+// 邮件列表：管理端工作台用 threaded=1 —— 一条会话一行，行内带 thread 子对象，
+// 「已处理 / 全部」里同一会话不会再重复成多行（平铺 threaded=0 时每封邮件一行）。
 // 工单过滤（迁移 0041）：ticket_status=open|closed|pending|processing|done|superseded|all、
 // ticket_assignee=me|unassigned|all、ticket_overdue=1。
-// 元素新增 ticket 与顶层 ticketStatus；被他人持有时服务端隐藏 snippet。
+// threaded 行：mailId / rootMailId 都是会话根，另有 latestSubject、replyCount，以及
+//   thread{rootMailId, subject, latestSubject, snippet, replyCount, messageCount,
+//          unreadCount, from, ticket, readOnly}；
+// 顶层同样带 ticket / ticketStatus / readOnly / hint（threaded 行**没有** direction）。
 // 2.2.0 起行内另含 readOnly（处理权限 + msg.ticket.read 时，待处理/他人持有的行可预览），
-// source=hint 的行还带 mail.hint 七字段快照（requestId / kind / status / quotedCost …）。
+// source=hint 的行还带 hint 七字段快照（requestId / kind / status / quotedCost …）。
 export const listMails = (params) => get("/admin/msg/mails", params);
 
-// 某封邮件的详情：mail（请求的那封自己）+ replyChain（它回复过的链，
-// 时间倒序、只上溯、不含后续回复）；没有 since_id / limit（不做会话增量）。
-// 2.2.0 起**纯读、不自动接单**（须先 claimTicket），并返回：
-//   ticket / threadTicket、readOnly、mail.appeal（申诉 6 字段快照，非申诉为 null）、
-//   mail.hint（求提示快照）、mail.hintQuotes[]（历次报价及其暂存答案，仅管理端）。
+// 整条会话（工作台详情）：thread（会话信息 + ticket）+ messages[]（按时间**升序**，
+// 每封都带正文与附件）+ hasMore / nextBeforeId（向更早翻页）+ readOnly。
+// 2.2.0 起**纯读、不自动接单**；readOnly=true = 只读预览（有处理权限 + msg.ticket.read，
+// 或 admin 看别人手上的工单），此时能看正文但不能回复 / 报价 / 回复申诉。
+// rootId 只认会话根（拿中间某一封的 id 会 404）；mark_read 目前必须显式传 1，
+// 不传或传 0 后端返回 500 E_INTERNAL（文档写的是可选，属于后端 bug）。
+export const getThread = (rootId, params) =>
+  get(`/admin/msg/threads/${rootId}`, { mark_read: 1, ...params });
+
+// 单封邮件详情：mail（请求的那封自己）+ replyChain（祖先链，时间倒序、不含后续回复）。
+// 工作台详情已改用 getThread()，这里留给「深链进来的 id 不是会话根」时反查根 id。
+// 口径同 getThread：纯读、须先 claim，并返回 ticket / threadTicket、readOnly、
+// mail.appeal（申诉 6 字段快照，非申诉为 null）、mail.hint（求提示快照）、
+// mail.hintQuotes[]（历次报价及其暂存答案，仅管理端）—— 后两个目前只有这里有。
 export const getMail = (id) => get(`/admin/msg/mails/${id}`);
 
 // 官方回复：主题由服务端生成（回复：<根主题>），正文之外要带 ticket_id
@@ -49,11 +62,11 @@ export const getMail = (id) => get(`/admin/msg/mails/${id}`);
 // 注意：source=hint 的邮件 403 HINT_REPLY_CLOSED（走报价/答复流程）；
 // source=appeal_* 的邮件 403 APPEAL_REPLY_CLOSED（走 /admin/appeals/:targetType/:targetId/reply）。
 export const replyMail = (id, body) =>
-    post(`/admin/msg/mails/${id}/reply`, body);
+  post(`/admin/msg/mails/${id}/reply`, body);
 
 // 逐封已读（POST /api/msg/mails/:id/read，与玩家端同一个接口）：
 // 无请求体、幂等、只标记这一封（不影响它回复过的链、也不影响同对话其它记录）。
-// 管理端打开一封未读邮件时调它，列表里的未读标记随之清零。
+// 工作台详情改用 getThread() 后由 mark_read=1 整条会话标记，这里留给其它页面按封标记。
 export const markMailRead = (id) => post(`/msg/mails/${id}/read`);
 
 // ---------- 公告 ----------
@@ -63,7 +76,7 @@ export const announce = (body) => post("/admin/msg/announce", body);
 
 // 历史公告（仍带正文，不套用「只给主题」的规则）
 export const listAnnouncements = (params) =>
-    get("/admin/msg/announcements", params);
+  get("/admin/msg/announcements", params);
 
 // ---------- 定向通知（2026-10-17 起，迁移 0027） ----------
 
@@ -79,20 +92,20 @@ export const notifyTargets = (body) => post("/admin/msg/notify", body);
 // 只向 staff / admin 广播（channel=internal，只读、canReply=false），玩家侧不可见。
 // 201 → { announced, threadId, msgId, createdAt }；历史用 GET /admin/msg/mails?channel=internal
 export const publishInternalAnnounce = (body) =>
-    post("/admin/msg/internal-announce", body);
+  post("/admin/msg/internal-announce", body);
 
 // ---------- 权限与权限组（admin） ----------
 
 export const listPermissions = () => get("/admin/permissions");
 
 export const getAccountPermissions = (id) =>
-    get(`/admin/accounts/${id}/permissions`);
+  get(`/admin/accounts/${id}/permissions`);
 
 export const grantPermissionGroup = (id, groupCode) =>
-    post(`/admin/accounts/${id}/permissions`, { group_code: groupCode });
+  post(`/admin/accounts/${id}/permissions`, { group_code: groupCode });
 
 export const revokePermissionGroup = (id, groupCode) =>
-    del(`/admin/accounts/${id}/permissions/${groupCode}`);
+  del(`/admin/accounts/${id}/permissions/${groupCode}`);
 
 // ---------- 求提示（两步报价，2026-10-14 起；2026-11-12 起并入站内信工作台） ----------
 // 旧 POST /admin/msg/hint/:id/reply 已删除：答复必须与报价一起提交，
@@ -110,7 +123,7 @@ export const revokePermissionGroup = (id, groupCode) =>
 // 2.2.0 起每个元素另含 quoteMailId / quoteCount（最近一次报价邮件与报价次数）。
 // 求提示工单与站内信工作台共享同一行，两边的 ticket_id 是同一个。
 export const listHintRequests = (params) =>
-    get("/admin/msg/hint-requests", params);
+  get("/admin/msg/hint-requests", params);
 
 // 求提示详情（2026-11-12 新增）：question / quotedCost / draftReply / attachments / status /
 // createdAt / questionMailId / cheaperMailId + ticket。
@@ -121,23 +134,23 @@ export const getHintRequest = (id) => get(`/admin/msg/hint/${id}`);
 // 报价：{ cost(0..1000000 整数), reply(1..2000), ticket_id } —— 报价即受理，释放该队「待报价」名额。
 // 2.2.0 起每次报价都会写一封玩家可见的「求提示报价」邮件（只含价格，不含答案），
 // 响应新增 quoteId / quoteMailId。必须已接单并带上 ticket_id，否则 409。
-export const quoteHint = (id, body) => post(`/admin/msg/hint/${id}/quote`, body);
+export const quoteHint = (id, body) =>
+  post(`/admin/msg/hint/${id}/quote`, body);
 
 // 同意降价并改回答：{ cost(必须严格低于当前 quotedCost), reply(必填), ticket_id }
 // 写一封「求提示降价」邮件（新价 + 原价，不含答案）；响应新增 quoteId / quoteMailId。
 export const requoteHint = (id, body) =>
-    post(`/admin/msg/hint/${id}/requote`, body);
+  post(`/admin/msg/hint/${id}/requote`, body);
 
 // 拒绝降价：{ ticket_id }；不改价不改回答，只把当前报价标记为最低报价。
 // 写一封「求提示降价」邮件（当前已是最低报价）；响应新增 mailId。
 export const declineCheaperHint = (id, body) =>
-    post(`/admin/msg/hint/${id}/decline-cheaper`, body);
+  post(`/admin/msg/hint/${id}/decline-cheaper`, body);
 
 // 拒绝求提示：{ reason?, ticket_id }；reason 可选、≤200；可拒绝 pending / quoted（未确认即未扣费）。
 // 写一封「求提示处理结果」邮件；响应新增 mailId。
 export const rejectHint = (id, body) =>
-    post(`/admin/msg/hint/${id}/reject`, body);
+  post(`/admin/msg/hint/${id}/reject`, body);
 
 // 禁言 / 封禁 / 申诉已迁到 ./moderation.js（2026-10-17 重构：
 // 旧的 /admin/msg/ban|unban 与 /admin/appeals/:accountId/reply 路径已不存在）。
-
