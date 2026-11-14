@@ -19,9 +19,9 @@ const LOOKUP_CONCURRENCY = 4;
 // kind: "account" | "team"
 // rows: 表格当前展示的行（ref 数组）；列表被截断时用它决定要补齐哪些行
 export function useMuteActions(kind, onChanged = () => {}, { rows } = {}) {
-    // 解除禁言 = 处罚撤销：该主体不再作为「等官方反馈」出现在申诉工作台，
-    // 侧栏「申诉工作台」角标要立刻跟上（禁言/封禁本身不会改变三路待办数）
-    const { refreshAppeals } = useWorkbenchBadges();
+    // 解除禁言 = 处罚撤销：申诉工单办结后侧栏角标（open 数）要立刻跟上
+    //（禁言 / 封禁本身不会改变来信待办数）
+    const { refresh: refreshBadges } = useWorkbenchBadges();
     const muteDialog = reactive({ visible: false, target: null });
     // accountId / teamId → 生效中的禁言行
     const muted = ref(new Map());
@@ -214,14 +214,14 @@ export function useMuteActions(kind, onChanged = () => {}, { rows } = {}) {
             const request = kind === "team" ? unmuteTeam : unmuteAccount;
             await request(id);
             ElMessage.success("已解除禁言");
-            void refreshAppeals();
+            void refreshBadges();
             await refreshMutes();
             onChanged();
         } catch (err) {
             // 404 = 当前未被禁言（可能已到期自动解除）：按成功刷新状态处理
             if (err?.status === 404) {
                 ElMessage.info("该目标当前未被禁言（可能已到期自动解除）");
-                void refreshAppeals();
+                void refreshBadges();
                 await refreshMutes();
                 onChanged();
                 return;

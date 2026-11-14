@@ -22,12 +22,20 @@ export const listMutes = (params) => get("/admin/mutes", params);
 // 解封仍走 /admin/players/:id/unban、/admin/teams/:id/unban（见 api/players.js、api/teams.js）
 export const listBanneds = (params) => get("/admin/banneds", params);
 
-// ---------- 申诉工作台 ----------
-// kind=ban|mute|all（可见范围由权限决定）、state=awaiting|all、cursor、limit≤50
+// ---------- 申诉（2026-11-12 起并入站内信工作台，2.2.0 起申诉也进工单） ----------
+// 列表：kind=ban|mute|all（可见范围由权限决定）、state=awaiting|all、cursor、limit≤50。
+// 2.2.0 起行内另含 ticket / ticketStatus / readOnly，并支持三个工单筛选：
+// ticket_status=open|pending|processing|closed|done|all、ticket_assignee=me|unassigned|all、
+// ticket_overdue=0|1；他人持有且调用方无只读权限时隐藏 lastAppeal.content / lastReply.content。
+// 合并后前端只用它做申诉筛选/查阅；侧栏角标改由 tickets/summary 的顶层 open 提供，
+// 回复 / 解禁用邮件详情内联的 `appeal` 快照。
 export const listAppeals = (params) => get("/admin/appeals", params);
 
 // 回复申诉：targetType=account|team，targetId 是账号 id 或队伍 id（不是邮件 id）。
 // 两个主体都要带 kind：ban → 需 admin；mute → 需 moderation.mute。
 // team + kind=ban 即「队伍封禁申诉」（队长代表队伍提交，回复写入队伍频道）。
+// 2.2.0 起该申诉有未办结工单时必须带 ticket_id，并且**admin 也要先 claim**：
+// 未接单 / 被他人持有 / ticket_id 失效 → 409 TICKET_NOT_CLAIMED / TICKET_CLAIMED / TICKET_STALE；
+// 回复成功即办结工单，响应新增 ticketId / ticketStatus / ticket。
 export const replyAppeal = (targetType, targetId, body) =>
     post(`/admin/appeals/${targetType}/${targetId}/reply`, body);
