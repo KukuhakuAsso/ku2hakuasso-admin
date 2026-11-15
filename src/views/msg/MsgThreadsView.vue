@@ -201,6 +201,17 @@
              否则长串会把头部的关闭按钮顶出抽屉可视区 -->
         <div class="drawer-head">
           <span class="drawer-head__title" :title="drawerTitle">{{ drawerTitle }}</span>
+          <!-- 抽屉打开期间轮询刻意不刷详情（读一半被替换会很难受），所以给一个统一的
+               手动入口：求提示 / 申诉 / 只读 / 不可回复 这几种分支原来都没有刷新按钮，
+               玩家侧确认报价、还价、别人补回复之后只能关掉重开才看得到。 -->
+          <el-button
+            class="drawer-head__refresh"
+            size="small"
+            :loading="drawer.loading"
+            @click="refreshDetail"
+          >
+            刷新
+          </el-button>
         </div>
       </template>
       <div class="mail-detail">
@@ -349,7 +360,7 @@
               placeholder="回复正文（1–2000 字），主题由服务端生成为「回复：<根主题>」"
             />
             <div class="reply-actions">
-              <el-button @click="loadMessages">刷新</el-button>
+              <el-button @click="refreshDetail">刷新</el-button>
               <el-button
                 type="primary"
                 :loading="drawer.sending"
@@ -816,6 +827,19 @@ async function loadMessages() {
   }
 }
 
+// 抽屉里的手动刷新：会话详情 + 分栏计数 + 列表一起刷。
+// 只刷详情不够 —— 工单状态一变，列表那一行还挂在原来的分栏里（如已办结的仍在「待处理」）。
+// 抽屉打开期间轮询刻意不碰列表与详情（见 startPolling），这里是唯一的「手动拉最新」入口。
+async function refreshDetail() {
+  refreshTicketSummary();
+  try {
+    await first();
+  } catch (err) {
+    ElMessage.error(extractErrorMessage(err));
+  }
+  await loadMessages();
+}
+
 // 发送者：from 是真实账号名（管理端不匿名）；系统身份（公告 / 警告）三项都是 null
 function senderName(msg) {
   const from = msg.from ?? {};
@@ -888,6 +912,9 @@ function onSourceActionDone(data) {
   // 角标：站内信 / 求提示 / 申诉已合并成一个数，重拉一次即可
   void refreshBadges();
   refreshTicketSummary();
+  // 动作会推进 / 办结工单：列表与分栏归属都要跟着更新，
+  // 否则已办结的会话还挂在「待处理」里（syncViewedTicket 只补行内的工单字段）
+  first().catch(() => {});
   void loadMessages();
 }
 
@@ -905,22 +932,32 @@ async function releaseCurrentTicket() {
   const active = ticket.value;
   if (!active?.ticketId || releasing.value) return;
 
+  // 记下这次操作对应的会话：await 期间用户可能已经切到别的会话，
+  // 那时这个响应（属于旧会话）不能再去改当前会话的工单条、更不能把当前抽屉关掉
+  const openedId = drawer.mailId;
   const forced = !heldByMe.value;
   const holder = ticketAssigneeName(active);
   releasing.value = true;
   try {
     const result = await releaseTicketQuietly(active.ticketId);
+    // 列表与计数永远刷新（工单确实已经退回，别人要能看到）
+    first().catch(() => {});
+    refreshTicketSummary();
+
+    const stillHere = drawer.mailId === openedId;
     if (!result.ok) {
       const descriptor = result.descriptor;
       if (descriptor?.action === TICKET_ERROR_ACTION.RELOAD) {
+        if (!stillHere) return;
         ElMessage.warning(descriptor.message);
         void loadMessages();
-        refreshTicketSummary();
-      } else {
+      } else if (stillHere) {
         ElMessage.error(descriptor?.message || "退出工单失败");
       }
       return;
     }
+
+    if (!stillHere) return;
     ticket.value = result.ticket ?? {
       ...active,
       status: "pending",
@@ -931,8 +968,6 @@ async function releaseCurrentTicket() {
         ? `已强制退回该工单（原处理人 ${holder || "staff"}），其他同事可接手（待处理计时不重置）`
         : "已释放该工单，其他同事可接手（待处理计时不重置）",
     );
-    first().catch(() => {});
-    refreshTicketSummary();
     // 没接手就不看详情：退出后本次打开的抽屉一并关掉（强制退回同理，退回后已不属于我）
     drawer.visible = false;
   } finally {
@@ -1028,16 +1063,29 @@ async function releaseRow(row) {
   }
 }
 
+// 组件是否已经卸载：初始化是异步的，await 之后可能早就离开页面了
+let disposed = false;
+
 onMounted(async () => {
+  // 先起轮询再等列表：初始化期间就卸载时，onBeforeUnmount 一定拿得到 timer，
+  // 不会在挂载回调恢复执行后留下一个没人清理的轮询（它每轮还会打 summary 与列表）。
+  // 轮询自身有守卫（抽屉打开 / 列表请求进行中 / 非第一页都会跳过），提前起步不会和首屏打架。
+  startPolling();
   try {
     // 先等列表回来：深链要按「这封的工单归谁」判断能不能打开
     await first();
   } catch (err) {
-    ElMessage.error(extractErrorMessage(err));
+    if (!disposed) ElMessage.error(extractErrorMessage(err));
   }
+  // 卸载后不再刷新计数、也不再按深链打开抽屉
+  if (disposed) return;
   refreshTicketSummary();
-  startPolling();
   openMailFromQuery();
+});
+
+onBeforeUnmount(() => {
+  disposed = true;
+  stopPolling();
 });
 
 // ?mailId=：外部带邮件 id 跳过来时（如从处罚记录 / 通知里的深链），打开那封所在的会话。
@@ -1068,9 +1116,12 @@ async function openMailFromQuery() {
   const row = list.value.find((item) => threadMatches(item, mailId));
   if (row) return openRow(row);
 
+  // 反查会话根要发一次请求，期间用户可能已经点开了别的会话 ——
+  // 点行不会改 ?mailId，所以光比 query 不够，还要盯「详情请求序号」：
+  // 变过就说明已经有别的会话被打开，这次反查的结果要作废，不能把人家顶掉。
+  const seq = detailSeq;
   const rootId = await resolveRootId(mailId);
-  // 反查期间用户可能又点了别的会话
-  if (Number(route.query.mailId) !== mailId) return;
+  if (seq !== detailSeq || Number(route.query.mailId) !== mailId) return;
   return openMail({ mailId: rootId });
 }
 
@@ -1078,10 +1129,6 @@ watch(
   () => route.query.mailId,
   () => openMailFromQuery(),
 );
-
-onBeforeUnmount(() => {
-  stopPolling();
-});
 </script>
 
 <style scoped>
@@ -1173,6 +1220,14 @@ onBeforeUnmount(() => {
 .drawer-head {
   flex: 1 1 auto;
   min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+/* 抽屉里的统一刷新按钮：不参与标题的收缩，也不抢关闭按钮的位置 */
+.drawer-head__refresh {
+  flex: 0 0 auto;
 }
 
 .drawer-head__title {
@@ -1183,6 +1238,8 @@ onBeforeUnmount(() => {
   font-size: 16px;
   font-weight: 600;
   line-height: 1.4;
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 :deep(.el-drawer__close-btn) {

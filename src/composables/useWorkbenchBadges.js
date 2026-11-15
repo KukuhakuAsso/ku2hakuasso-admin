@@ -17,7 +17,7 @@ import { computed, reactive } from "vue";
 import { getTicketSummary } from "@/api/msg";
 import { formatBadge } from "@/utils/workbenchBadge";
 
-const POLL_INTERVAL_MS = 60000;
+const POLL_INTERVAL_MS = 180000;
 
 const state = reactive({
     open: 0,
