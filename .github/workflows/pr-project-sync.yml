@@ -39,7 +39,7 @@ permissions:
 
 env:
     # ↓↓↓↓↓↓↓↓↓↓ per-repo configuration ↓↓↓↓↓↓↓↓↓↓
-    MODULE_VALUE: ku2hakuasso-admin # option name of the "Module" field
+    MODULE_VALUE: admin # option name of the "Module" field (admin / 2anns / site / api / other)
     MODULE_LABEL: module:admin # label added to the PR (warning only if missing)
     DEFAULT_BRANCH: main # only PRs merged into this branch close the issue
     # ↑↑↑↑↑↑↑↑↑↑ per-repo configuration ↑↑↑↑↑↑↑↑↑↑
