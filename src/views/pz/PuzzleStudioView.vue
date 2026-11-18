@@ -17,6 +17,7 @@ import MediaPanel from "@/components/pz/MediaPanel.vue";
 import WidgetPanel from "@/components/pz/WidgetPanel.vue";
 import FolderPanel from "@/components/pz/FolderPanel.vue";
 import HintsPanel from "@/components/pz/HintsPanel.vue";
+import IframeOriginPanel from "@/components/pz/IframeOriginPanel.vue";
 
 const auth = useAuthStore();
 const canPublishWidget = computed(() => auth.can("pz.widget.publish"));
@@ -461,6 +462,10 @@ async function onWidgetPublished({ name, referencesUpdated }) {
                 </el-tab-pane>
                 <el-tab-pane label="目录" name="folder">
                     <FolderPanel @changed="folders = $event" />
+                </el-tab-pane>
+                <!-- 外链来源 allowlist 是 admin-only：保存 iframe 页面要求 origin 在启用列表里 -->
+                <el-tab-pane v-if="auth.isAdmin" label="外链来源" name="iframe-origin">
+                    <IframeOriginPanel />
                 </el-tab-pane>
             </el-tabs>
         </aside>

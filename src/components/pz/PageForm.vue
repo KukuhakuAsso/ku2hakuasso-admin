@@ -713,6 +713,10 @@ async function save() {
                         v-model="model.malleable.url"
                         placeholder="https://…（仅 https，≤500 字符）"
                     />
+                    <p class="tip">
+                        地址的 origin 必须在「外链来源」的启用列表里（admin
+                        维护），否则保存会被后端拒绝。
+                    </p>
                 </el-form-item>
             </template>
 

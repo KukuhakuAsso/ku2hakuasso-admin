@@ -185,3 +185,24 @@ export const upsertFolder = ({ key: folderKey, title, ord, enabled, unlock, owne
 // 删除目录；目录下仍有题目时后端返回 409（不会自动把题目置为未分组）。
 export const deleteFolder = (folderKey) =>
     del(`/admin/pz/folders/${key(folderKey)}`);
+
+// ---------- iframe 来源 allowlist（admin-only，2026-11-18 起） ----------
+
+// 列表（含已停用 status=2 的行）。保存 iframe 页面时后端要求 url 的 origin 在这份**启用**列表里，
+// 不在 → 400 且 detail.fields 指向 malleable.url。
+// 响应形状文档未定；视图层对 { origins } / { items } / 数组三种都做了兼容。
+export const listIframeOrigins = (options) =>
+    get("/admin/pz/iframe-origins", undefined, options);
+
+// 新建或恢复（幂等 upsert）：origin 只接受 https://host[:port]，全库唯一。
+// status 省略时由后端决定；传 1 可把软删的行恢复启用。
+export const upsertIframeOrigin = ({ origin, note, status }) =>
+    post("/admin/pz/iframe-origins", {
+        origin,
+        ...(note === undefined ? {} : { note }),
+        ...(status === undefined ? {} : { status }),
+    });
+
+// **软删**：只把 status 置 2，不物理删除，POST 同 origin 可恢复。
+export const deleteIframeOrigin = (id) =>
+    del(`/admin/pz/iframe-origins/${key(id)}`);
