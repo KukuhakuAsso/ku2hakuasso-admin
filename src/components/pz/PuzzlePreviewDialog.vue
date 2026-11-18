@@ -187,6 +187,8 @@ function close() {
                 <PreviewMalleable
                     v-if="preview.malleable"
                     :malleable="preview.malleable"
+                    :puzzle-key="puzzleKey"
+                    :view="preview"
                 />
 
                 <section v-if="attachments.length" class="pv-section">

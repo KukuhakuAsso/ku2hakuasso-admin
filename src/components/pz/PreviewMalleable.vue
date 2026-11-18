@@ -1,11 +1,16 @@
 <script setup>
 // 预览里的可塑区：只负责容器、骨架与兜底；组件内部排版由组件自己负责。
 // 组件包内联了自己的 Vue 运行时，跨边界只传纯数据（props）。
-import { computed, h, onBeforeUnmount, watch } from "vue";
+import { computed, h, onBeforeUnmount, shallowRef, watch } from "vue";
 import { useMalleableWidget } from "@/composables/useAdminMalleableWidget";
+import { createPreviewPzBridge } from "@/utils/previewPzBridge";
 
 const props = defineProps({
     malleable: { type: Object, required: true },
+    // 组件题状态桥的 key；预览不下发 runtime，桥固定为只读
+    puzzleKey: { type: String, default: "" },
+    // 完整预览视图，透给组件的 pz.snapshot().view
+    view: { type: Object, default: null },
 });
 
 const isComponent = computed(() => props.malleable?.kind === "component");
@@ -19,6 +24,32 @@ const minHeight = computed(() => {
 const widgetProps = computed(() => props.malleable?.props ?? {});
 const asset = computed(() => props.malleable?.asset ?? null);
 
+const { status, error, tag, ensure, cancel } = useMalleableWidget();
+
+// 管理端预览只读：组件仍拿到 pz（契约 pz-bridge@0.2），但 rpc 一律 reject E_PREVIEW。
+const bridge = shallowRef(null);
+let bridgeSignature = null;
+
+watch(
+    () => [props.puzzleKey, tag.value],
+    () => {
+        const signature = `${props.puzzleKey}\u0000${tag.value}`;
+        if (bridge.value && signature === bridgeSignature) return;
+        bridge.value?.dispose();
+        bridgeSignature = signature;
+        bridge.value = createPreviewPzBridge({
+            puzzleKey: props.puzzleKey,
+            view: props.view,
+        });
+    },
+    { immediate: true },
+);
+
+watch(
+    () => props.view,
+    (view) => bridge.value?.setView(view),
+);
+
 // 用 render 函数挂自定义元素：props 走 DOM property 而不是 attribute，
 // 这样出题人配置的对象不会被序列化成字符串。
 //
@@ -30,13 +61,16 @@ const WidgetHost = {
     props: {
         tag: { type: String, required: true },
         widgetProps: { type: Object, default: () => ({}) },
+        pz: { type: Object, default: null },
     },
     setup(hostProps) {
-        return () => h(hostProps.tag, { ...hostProps.widgetProps });
+        return () =>
+            h(hostProps.tag, {
+                ...hostProps.widgetProps,
+                ...(hostProps.pz ? { pz: hostProps.pz } : {}),
+            });
     },
 };
-
-const { status, error, tag, ensure, cancel } = useMalleableWidget();
 
 watch(
     asset,
@@ -46,7 +80,11 @@ watch(
     { immediate: true },
 );
 
-onBeforeUnmount(cancel);
+onBeforeUnmount(() => {
+    bridge.value?.dispose();
+    bridge.value = null;
+    cancel();
+});
 
 function retry() {
     ensure(asset.value ?? null);
@@ -61,6 +99,7 @@ function retry() {
                     v-if="status === 'ready'"
                     :tag="tag"
                     :widget-props="widgetProps"
+                    :pz="bridge"
                     class="pv-malleable__host"
                 />
                 <div v-else-if="status === 'error'" class="pv-malleable__fallback">
@@ -70,6 +109,8 @@ function retry() {
                 <div v-else class="pv-malleable__skeleton" aria-hidden="true" />
             </template>
 
+            <!-- 外链题：预览地址可能带短时 pz_ticket（mode=preview），原样透传即可；
+                 由 iframe 页面自行从 location.hash 读取，管理端不读、不写日志。 -->
             <iframe
                 v-else-if="isIframe"
                 class="pv-malleable__iframe"
