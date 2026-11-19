@@ -2,12 +2,17 @@
 // 五元素编辑：封面 → 描述 → 可塑区 → 附件，外加目录归属与解锁规则。
 // 标题不在这里（仍走 PUT /admin/puzzles/:key，避免两个真源）。
 import { computed, nextTick, onMounted, ref, shallowRef, watch } from "vue";
-import { ElMessage } from "element-plus";
+import { ElMessage, ElMessageBox } from "element-plus";
 import { putPuzzlePage } from "@/api/pz";
 import { useAuthStore } from "@/stores/auth";
 import { ATTACHMENT_TYPES } from "@/config/pz";
 import { renderMarkdown } from "@/utils/miniMarkdown";
-import { describeApiError, extractErrorMessage } from "@/api/errors";
+import {
+    describeApiError,
+    errorDetail,
+    errorReasonCode,
+    extractErrorMessage,
+} from "@/api/errors";
 import SourceEditor from "@/components/pz/SourceEditor.vue";
 import UnlockForm from "@/components/pz/UnlockForm.vue";
 import PageMergeDialog from "@/components/pz/PageMergeDialog.vue";
@@ -540,15 +545,54 @@ async function save() {
         ElMessage.success(`已保存，rev ${model.value.rev}`);
         emit("saved", data);
     } catch (error) {
-        ElMessage.error(
-            describeApiError(error, {
-                fallback: "保存失败",
-                forbidden: "只能修改自己的题目；跨目录 / 他人题目需要 admin",
-            }),
-        );
+        await reportSaveError(error);
     } finally {
         saving.value = false;
     }
+}
+
+// 保存失败：优先把「不可引用素材」的全量清单列出来（2.4.0 的 invalidRefs），
+// 系统不会自动改页面，需要用户按清单清理后再存。
+const MEDIA_REF_REASON_LABEL = {
+    not_found: "素材不存在",
+    disabled: "素材已停用",
+    not_referenceable: "不可被本题引用",
+};
+
+async function reportSaveError(error) {
+    const invalidRefs =
+        errorReasonCode(error) === "MEDIA_REF_INVALID"
+            ? errorDetail(error).invalidRefs
+            : null;
+
+    if (Array.isArray(invalidRefs) && invalidRefs.length) {
+        const lines = invalidRefs.slice(0, 20).map((ref) => {
+            const reason = MEDIA_REF_REASON_LABEL[ref.reason] || ref.reason || "";
+            const where = ref.where || ref.path || "页面";
+            const index = ref.index !== undefined ? ` #${Number(ref.index) + 1}` : "";
+            return `· ${where}${index} → 素材 #${ref.assetId}（${reason}）`;
+        });
+        if (invalidRefs.length > lines.length) {
+            lines.push(`…其余 ${invalidRefs.length - lines.length} 处请在素材面板的「本题已使用」里查看`);
+        }
+        try {
+            await ElMessageBox.alert(
+                lines.join("\n"),
+                `有 ${invalidRefs.length} 处素材引用不可用`,
+                { confirmButtonText: "我知道了" },
+            );
+        } catch {
+            // 关掉弹窗不算异常
+        }
+        return;
+    }
+
+    ElMessage.error(
+        describeApiError(error, {
+            fallback: "保存失败",
+            forbidden: "只能修改自己的题目；跨目录 / 他人题目需要 admin",
+        }),
+    );
 }
 </script>
 

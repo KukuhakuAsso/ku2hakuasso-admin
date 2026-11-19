@@ -14,8 +14,9 @@ const key = (value) => encodeURIComponent(String(value ?? ""));
 
 // ---------- 题目主数据（标题 / 排序 / 奖励 / 答案 / 启用 / 出题人） ----------
 
-// 题库列表：items 字段为 key / title / ord / archiveId / tipsReward / enabled，
-// 另有 authorId / authorUsername。
+// 题库列表：items 字段为 key / title / ord / archiveId / tipsReward / enabled / folderKey，
+// 另有 authorId / authorUsername。mistarg.2.4.1 起响应另带 folders[]（目录扁平列表，
+// 按 ord,key 升序，含空目录与停用目录），出题台据此分组。
 // 2026-11-05 起严格隔离：admin 返回全部；持 pz.content.edit 的 staff 只返回自己的题；
 // 无该权限的 staff 返回空列表。
 // answer 只对 admin 或「持有 pz.content.edit 且是该题作者」返回，无权限时字段不存在（不是 null）。
@@ -93,12 +94,16 @@ export const confirmMedia = ({
         note,
     });
 
-// 素材清单：按维度查询（mistarg.2.4.0 起 view=mine 已移除，改用 view=owner）。
-//   view=owner（默认）我的素材；admin 可用 ownerId 指定他人
-//   view=public 公共素材；view=usable 所有可引用素材
-//   view=puzzle 某题可用（必填 puzzleKey，admin 编辑他人题时按题作者取）
-//   allowShare=1 只看已允许他人使用的；withdrawRequested=1（admin）待审撤回
-// options 目前只有 signal：切题时由 requestLatest 中断上一次请求
+// 素材（api-12 §四，mistarg.2.3.0 起素材与题目分离）
+//
+// 归属：私有 private 归出题人（本人 + admin 可改），公共 public 所有出题人可引用、
+// 只有 admin 能改；进公共区要作者先允许他人使用（allowShare），出公共区要 admin 同意（撤回）。
+//
+// 查询维度（mistarg.2.4.0 起 view=mine 已移除）：
+//   view=owner（默认）我的素材，admin 可用 ownerId 指定他人
+//   view=usable 所有可用；view=public 公共；view=all 全量（admin）
+//   view=puzzle 某题可用（必填 puzzleKey；行带 usedInPage / marked）
+//   view=used 某题已使用（必填 puzzleKey）→ data = { media, invalidRefs }
 export const listMedia = (params = {}, options) =>
     get("/admin/pz/media", params, options);
 
@@ -106,6 +111,11 @@ export const listMedia = (params = {}, options) =>
 // admin 另可用 scope 收录（private→public，要求 allowShare=true）或下架（public→private）、
 // 用 ownerId 改私有素材归属。
 export const updateMedia = (id, body) => put(`/admin/pz/media/${id}`, body);
+
+// admin-only：素材使用反查（素材 → 引用题 + 位置 + 仅标记题）
+// 响应 { asset, summary, items: [{ puzzleKey, title, relation, needsAttention, refs, marked }], limit, total }
+export const getMediaUsage = (id, params) =>
+    get(`/admin/pz/media/${id}/usage`, params);
 
 // 撤回流程（仅公共素材）：作者申请 / 撤销；admin 用同一个 DELETE 驳回申请。
 export const requestMediaWithdraw = (id) =>
@@ -117,6 +127,15 @@ export const cancelMediaWithdraw = (id) =>
 // admin 同意撤回：素材回到原作者私有，并清掉 allowShare 与申请。
 export const approveMediaWithdraw = (id) =>
     post(`/admin/pz/media/${id}/withdraw/approve`);
+
+// 本题素材标记（mistarg.2.4.0，幂等）：把素材归入「本题已使用」列表，
+// 不要求页面已引用；素材须当前可被本题引用，否则 400 MEDIA_REF_INVALID。
+export const markPuzzleMedia = (puzzleKey, assetId) =>
+    put(`/admin/pz/puzzle/${key(puzzleKey)}/media/${Number(assetId)}`);
+
+// 取消本题标记（幂等）：不要求素材当前可用，便于清理失效标记。
+export const unmarkPuzzleMedia = (puzzleKey, assetId) =>
+    del(`/admin/pz/puzzle/${key(puzzleKey)}/media/${Number(assetId)}`);
 
 // 直传本体：按 sign 返回的方式把文件 PUT 到对象存储（不经过后端）。
 // 返回 { promise }，promise 在 2xx 时 resolve；onProgress 收到 0–100。

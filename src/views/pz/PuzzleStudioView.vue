@@ -41,8 +41,9 @@ const media = ref([]);
 const widgets = ref([]);
 const folders = ref([]);
 
-const activeTab = ref("media");
-// 中间栏：页面五元素 / 题目主数据（原「题库」页并入这里）
+// 右侧栏：素材库 / 组件 / 目录 / 外链来源（与具体题目无关的全局工具）
+const sideTab = ref("library");
+// 中间栏：页面五元素 / 题目主数据 / 素材 / 提示（后两个是「每道题各自」的）
 const editorTab = ref("page");
 
 const createOpen = ref(false);
@@ -87,11 +88,36 @@ const filteredPuzzles = computed(() => {
     );
 });
 
+// 按目录分组（mistarg.2.4.1）：folders 是扁平列表（服务端按 ord,key 升序），
+// 题目用 folderKey 归组，null / 未知目录都进「未分组」。
+// 空目录与停用目录也展示（停用置灰），便于出题人知道有哪些目录可用。
+const groupedPuzzles = computed(() => {
+    const groups = (folders.value ?? []).map((folder) => ({
+        key: folder.key,
+        title: folder.title || folder.key,
+        enabled: folder.enabled !== false,
+        items: [],
+    }));
+    const byKey = new Map(groups.map((group) => [group.key, group]));
+    const ungrouped = { key: "", title: "未分组", enabled: true, items: [] };
+
+    for (const item of filteredPuzzles.value) {
+        const group = item.folderKey ? byKey.get(item.folderKey) : null;
+        (group ?? ungrouped).items.push(item);
+    }
+
+    const result = groups.filter((group) => group.items.length > 0);
+    if (ungrouped.items.length) result.push(ungrouped);
+    return result;
+});
+
 async function loadPuzzles() {
     puzzleLoading.value = true;
     try {
         const data = await listPuzzles();
         puzzles.value = data?.items ?? [];
+        // 2.4.1：一次拿到题目与目录，直接用于左侧分组（也为页面表单提供目录选项）
+        if (Array.isArray(data?.folders)) folders.value = data.folders;
         // 默认选中第一题，省一次点击
         if (!selectedKey.value && puzzles.value.length) {
             await selectPuzzle(puzzles.value[0].key);
@@ -114,6 +140,7 @@ async function refreshList() {
     try {
         const data = await listPuzzles();
         if (Array.isArray(data?.items)) puzzles.value = reuseUnchangedRows(data.items);
+        if (Array.isArray(data?.folders)) folders.value = data.folders;
     } catch {
         // 静默失败：主数据已保存成功，列表稍后刷新即可
     }
@@ -371,33 +398,45 @@ async function onWidgetPublished({ name, referencesUpdated }) {
 
             <el-scrollbar v-loading="puzzleLoading" class="studio__list-body">
                 <p v-if="!filteredPuzzles.length" class="tip">没有匹配的题目</p>
-                <button
-                    v-for="item in filteredPuzzles"
-                    :key="item.key"
-                    type="button"
-                    class="puzzle-item"
-                    :class="{ 'is-active': item.key === selectedKey }"
-                    @click="selectPuzzle(item.key)"
+                <!-- 2.4.1：按目录分组（扁平列表，未分组放最后） -->
+                <section
+                    v-for="group in groupedPuzzles"
+                    :key="group.key || 'ungrouped'"
+                    class="puzzle-group"
                 >
-                    <span class="puzzle-item__title">{{ item.title || item.key }}</span>
-                    <span class="puzzle-item__meta">
-                        {{ item.key }}
-                        <el-tag v-if="item.enabled === false" size="small" type="info">
-                            停用
-                        </el-tag>
-                    </span>
-                    <!-- 出题人隔离后，staff 只会看到自己的题；admin 用它区分归属 -->
-                    <span
-                        v-if="auth.isAdmin && item.authorUsername"
-                        class="puzzle-item__author"
+                    <p class="puzzle-group__head">
+                        <span>{{ group.title }}</span>
+                        <span class="puzzle-group__count">{{ group.items.length }}</span>
+                        <el-tag v-if="!group.enabled" size="small" type="info">停用</el-tag>
+                    </p>
+                    <button
+                        v-for="item in group.items"
+                        :key="item.key"
+                        type="button"
+                        class="puzzle-item"
+                        :class="{ 'is-active': item.key === selectedKey }"
+                        @click="selectPuzzle(item.key)"
                     >
-                        {{ item.authorUsername }}
-                    </span>
-                </button>
+                        <span class="puzzle-item__title">{{ item.title || item.key }}</span>
+                        <span class="puzzle-item__meta">
+                            {{ item.key }}
+                            <el-tag v-if="item.enabled === false" size="small" type="info">
+                                停用
+                            </el-tag>
+                        </span>
+                        <!-- 出题人隔离后，staff 只会看到自己的题；admin 用它区分归属 -->
+                        <span
+                            v-if="auth.isAdmin && item.authorUsername"
+                            class="puzzle-item__author"
+                        >
+                            {{ item.authorUsername }}
+                        </span>
+                    </button>
+                </section>
             </el-scrollbar>
         </aside>
 
-        <!-- 中：五元素编辑 + 题目主数据 -->
+        <!-- 中：当前题目的编辑区（页面 / 主数据 / 素材 / 提示，都是逐题的） -->
         <section class="studio__editor">
             <el-empty
                 v-if="!selectedKey"
@@ -435,31 +474,30 @@ async function onWidgetPublished({ name, referencesUpdated }) {
                             @saved="onMetaSaved"
                         />
                     </el-tab-pane>
+                    <!-- 素材：本题可用（该题作者的私有素材 + 公共素材），换题自动重取 -->
+                    <el-tab-pane label="素材" name="media">
+                        <MediaPanel
+                            :puzzle-key="selectedKey"
+                            @changed="media = $event"
+                        />
+                    </el-tab-pane>
+                    <!-- 提示：逐题维护；保存会让 page_rev +1，按服务端 rev 重取页面草稿 -->
+                    <el-tab-pane label="提示" name="hints">
+                        <HintsPanel
+                            :key="selectedKey"
+                            :puzzle-key="selectedKey"
+                            @saved="onSaved"
+                        />
+                    </el-tab-pane>
                 </el-tabs>
             </div>
         </section>
 
-        <!-- 右：素材 / 组件 / 目录 -->
+        <!-- 下：素材库 / 组件 / 目录 / 外链来源（全局工具，不随选中的题变化；独占一行以容纳宽表格） -->
         <aside class="studio__side">
-            <el-tabs v-model="activeTab" class="studio__tabs">
-                <el-tab-pane label="素材" name="media">
-                    <MediaPanel
-                        :puzzle-key="selectedKey"
-                        @changed="media = $event"
-                    />
-                </el-tab-pane>
+            <el-tabs v-model="sideTab" class="studio__tabs">
                 <el-tab-pane label="素材库" name="library">
                     <MediaLibraryPanel />
-                </el-tab-pane>
-                <el-tab-pane label="提示" name="hints">
-                    <!-- 提示保存也会让 page_rev +1：按服务端 rev 重取一次页面草稿 -->
-                    <HintsPanel
-                        v-if="selectedKey"
-                        :key="selectedKey"
-                        :puzzle-key="selectedKey"
-                        @saved="onSaved"
-                    />
-                    <p v-else class="tip">从左侧选择一道题目后再维护提示</p>
                 </el-tab-pane>
                 <el-tab-pane v-if="canPublishWidget" label="组件" name="widget">
                     <WidgetPanel @changed="widgets = $event" @published="onWidgetPublished" />
@@ -511,7 +549,8 @@ async function onWidgetPublished({ name, referencesUpdated }) {
 <style scoped>
 .studio {
     display: grid;
-    grid-template-columns: 220px minmax(0, 1fr) 420px;
+    /* 上行：题目列表 + 编辑区；下行：共享资源区（全宽） */
+    grid-template-columns: 220px minmax(0, 1fr);
     gap: 12px;
     align-items: start;
     min-height: calc(100vh - 120px);
@@ -520,10 +559,6 @@ async function onWidgetPublished({ name, referencesUpdated }) {
 @media (max-width: 1400px) {
     .studio {
         grid-template-columns: 200px minmax(0, 1fr);
-    }
-
-    .studio__side {
-        grid-column: 1 / -1;
     }
 }
 
@@ -534,6 +569,10 @@ async function onWidgetPublished({ name, referencesUpdated }) {
     border: 1px solid var(--el-border-color-lighter);
     border-radius: 6px;
     background: var(--el-bg-color);
+}
+
+.studio__side {
+    grid-column: 1 / -1;
 }
 
 .studio__list-head {
@@ -548,6 +587,29 @@ async function onWidgetPublished({ name, referencesUpdated }) {
 
 .studio__list-body {
     max-height: calc(100vh - 200px);
+}
+
+/* 目录分组：标题比题目行更轻，避免抢视线 */
+.puzzle-group + .puzzle-group {
+    margin-top: 8px;
+}
+
+.puzzle-group__head {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin: 0 0 4px;
+    padding: 2px 4px;
+    border-bottom: 1px dashed var(--el-border-color-lighter);
+    color: var(--el-text-color-secondary);
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.puzzle-group__count {
+    margin-left: auto;
+    font-weight: 400;
+    opacity: 0.7;
 }
 
 .puzzle-item {

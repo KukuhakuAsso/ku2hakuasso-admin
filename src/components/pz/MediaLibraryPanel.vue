@@ -1,11 +1,12 @@
 <script setup>
-// 素材库：素材与题目分离（mistarg.2.3.0）后的管理中心，嵌在出题台右侧页签里。
+// 素材库：素材与题目分离（mistarg.2.3.0）后的管理中心。
 //
 // 子页签（按角色/权限显示）：
-//   · 我的素材  view=owner（默认）——自己的私有素材与已收录的公共素材
-//   · 公共素材  view=public ——所有人可引用；作者对其中自己的素材只能申请撤回
-//   · 收录候选  view=usable&allowShare=1（admin）——从「已允许他人使用」的私有素材收录
+//   · 我的素材  view=owner（默认）——自己名下全部素材（含已被收录公共的，便于撤回）
+//   · 公共素材  view=public ——已进公共区；所有出题人可引用，只有 admin 能改
+//   · 收录候选  view=all + 前端筛「allowShare 且仍在私有区」（admin）——待收录池
 //   · 撤回审批  view=public&withdrawRequested=1（admin）——同意 / 驳回作者申请
+//   · 全部素材  view=all（admin）——全量盘点
 //
 // 行内动作与权限口径都在 MediaTable 里，这里只负责取数与页签切换。
 import { computed, ref, watch } from "vue";
@@ -23,6 +24,7 @@ const TABS = [
     { name: "public", label: "公共素材", upload: false },
     { name: "usable", label: "收录候选", adminOnly: true },
     { name: "withdraw", label: "撤回审批", adminOnly: true },
+    { name: "all", label: "全部素材", adminOnly: true },
 ];
 
 const tabs = computed(() =>
@@ -37,9 +39,19 @@ let seq = 0;
 
 function paramsOf(name) {
     if (name === "public") return { view: "public" };
-    if (name === "usable") return { view: "usable", allowShare: 1 };
+    // 收录候选必须看得到所有出题人的素材：view=usable 只覆盖「我名下 ∪ 公共」，
+    // 拿不到别人的候选，还会把已收录的公共素材混进来，故取全量后在前端筛。
+    if (name === "usable") return { view: "all" };
     if (name === "withdraw") return { view: "public", withdrawRequested: 1 };
+    if (name === "all") return { view: "all" };
     return { view: "owner" };
+}
+
+// 收录候选 = 作者已点「允许他人使用」、还没被收录进公共区的私有素材
+function filterRows(name, media) {
+    const list = Array.isArray(media) ? media : [];
+    if (name !== "usable") return list;
+    return list.filter((row) => row.scope !== "public" && Boolean(row.allowShare));
 }
 
 async function load() {
@@ -49,7 +61,7 @@ async function load() {
     try {
         const data = await listMedia(paramsOf(name));
         if (current !== seq) return;
-        rows.value = Array.isArray(data?.media) ? data.media : [];
+        rows.value = filterRows(name, data?.media);
     } catch (error) {
         if (current !== seq) return;
         rows.value = [];
@@ -96,10 +108,12 @@ const activeUpload = computed(
             <span v-else class="tip">
                 {{
                     activeTab === "public"
-                        ? "公共素材所有出题人都可引用；已收录的素材只有管理员能修改。"
+                        ? "已收录进公共区的素材：所有出题人都可引用，只有管理员能修改；作者可申请撤回。"
                         : activeTab === "usable"
-                          ? "这里只列出作者已允许他人使用的私有素材。"
-                          : "作者申请撤回公共素材后在此审批：同意后素材回到作者私有区。"
+                          ? "待收录：作者已点「允许他人使用」且仍在私有区；点「收录」才会进公共区。"
+                          : activeTab === "all"
+                            ? "全量盘点：所有人的私有素材与公共素材；可点「引用」反查素材被哪些题用到。"
+                            : "作者申请撤回公共素材后在此审批：同意后素材回到作者私有区。"
                 }}
             </span>
             <el-button size="small" :loading="loading" @click="load">刷新</el-button>

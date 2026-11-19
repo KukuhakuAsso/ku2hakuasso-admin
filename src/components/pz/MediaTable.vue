@@ -1,18 +1,23 @@
 <script setup>
 // 素材表格：本题素材面板与「素材库」各子页签共用。
 //
-// 只负责展示 + 行内动作；取数由调用方决定 view（owner / public / usable / puzzle）。
-// 权限口径（mistarg.2.3.0）：
-//   · 私有素材：本人或 admin 可改；公共素材只有 admin 能改，作者只能申请撤回；
-//   · 收录（private → public）要求作者已开启 allowShare，否则 400 MEDIA_SHARE_NOT_ALLOWED；
-//   · 撤回：作者申请 / 撤销，admin 同意或驳回。
+// 只负责展示 + 行内动作；取数由调用方决定 view：
+//   puzzle → 本题可用（行带 usedInPage / marked，可「标记本题 / 取消标记」）
+//   used   → 本题已使用（行带 sources / invalid / invalidReason）
+//   owner / public / usable / all → 素材库的各子页签
+//
+// 权限口径（mistarg.2.3.0）：私有素材本人或 admin 可改；公共素材只有 admin 能改，
+// 作者只能申请撤回。撤回影响面用 withdrawImpact（2.4.0 起取代 referencedBy* 字段）。
 import { computed, reactive, ref } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { useAuthStore } from "@/stores/auth";
 import {
     approveMediaWithdraw,
     cancelMediaWithdraw,
+    getMediaUsage,
+    markPuzzleMedia,
     requestMediaWithdraw,
+    unmarkPuzzleMedia,
     updateMedia,
 } from "@/api/pz";
 import { describeApiError } from "@/api/errors";
@@ -20,12 +25,17 @@ import { describeApiError } from "@/api/errors";
 const props = defineProps({
     rows: { type: Array, default: () => [] },
     loading: { type: Boolean, default: false },
-    // 当前视图（只用于空数据文案）
+    // 当前视图：puzzle / used / owner / public / usable / all
     view: { type: String, default: "" },
+    // 本题标记 / 取消标记需要的题目 key（view=puzzle|used 时必填）
+    puzzleKey: { type: String, default: "" },
 });
 const emit = defineEmits(["refresh"]);
 
 const auth = useAuthStore();
+
+const isPuzzleView = computed(() => props.view === "puzzle");
+const isUsedView = computed(() => props.view === "used");
 
 const isPublic = (row) => row?.scope === "public";
 const isMine = (row) =>
@@ -40,10 +50,20 @@ const canApproveWithdraw = (row) => auth.isAdmin && Boolean(row.withdrawRequeste
 const canCollect = (row) => auth.isAdmin && !isPublic(row) && Boolean(row.allowShare);
 const canDelist = (row) => auth.isAdmin && isPublic(row);
 
+// 本题使用状态：view=puzzle 是布尔标记；view=used 是 sources 数组
+const pageUsed = (row) =>
+    Boolean(row?.usedInPage) ||
+    (Array.isArray(row?.sources) && row.sources.includes("page"));
+const marked = (row) =>
+    Boolean(row?.marked) || (Array.isArray(row?.sources) && row.sources.includes("mark"));
+const isInvalid = (row) => Boolean(row?.invalid);
+
 const busyId = ref(null);
 const emptyText = computed(() => {
     if (props.loading) return "加载中…";
-    return props.view === "puzzle" ? "本题还没有可用素材" : "暂无素材";
+    if (props.view === "puzzle") return "本题还没有可用素材";
+    if (props.view === "used") return "本题还没有使用任何素材";
+    return "暂无素材";
 });
 
 async function run(row, action, request, successText) {
@@ -54,7 +74,7 @@ async function run(row, action, request, successText) {
         ElMessage.success(successText);
         emit("refresh");
     } catch (error) {
-        // 素材类 reason_code（MEDIA_*）的文案在 api/errors.js 统一维护
+        // reason_code（MEDIA_*）的文案在 api/errors.js 统一维护
         ElMessage.error(describeApiError(error, { fallback: "操作失败" }));
     } finally {
         busyId.value = null;
@@ -114,14 +134,24 @@ function cancelWithdraw(row) {
     );
 }
 
-// 同意撤回会影响其他出题人的题（后端不阻断，但要先告知）
+// 同意撤回：withdrawImpact 说明会影响哪些人（other 需该题作者自行清理，后端不阻断）
 async function approveWithdraw(row) {
-    const others = Number(row.referencedByOtherAuthors ?? 0) || 0;
+    const impact = row.withdrawImpact || {};
+    const lines = [];
+    if (Number(impact.self ?? 0) > 0) {
+        lines.push(`作者自己的 ${impact.self} 道题引用了它（作者可自行清理）`);
+    }
+    if (Number(impact.admin ?? 0) > 0) {
+        lines.push(`${impact.admin} 道管理员题目引用了它（管理员可自行处理）`);
+    }
+    if (Number(impact.other ?? 0) > 0 || impact.needsAttention) {
+        lines.push(
+            `其他出题人的 ${impact.other ?? 0} 道题引用了它，撤回后需要他们自行清理引用`,
+        );
+    }
     try {
         await ElMessageBox.confirm(
-            others > 0
-                ? `同意后素材回到作者私有区。该素材还被其他出题人的 ${others} 道题引用，撤回后需要他们自行清理引用。`
-                : "同意后素材回到作者私有区，并清除「允许他人使用」标记。",
+            ["同意后素材回到作者私有区，并清除「允许他人使用」标记。", ...lines].join("\n"),
             "同意撤回",
             { type: "warning", confirmButtonText: "同意撤回" },
         );
@@ -134,6 +164,56 @@ async function approveWithdraw(row) {
         () => approveMediaWithdraw(row.id),
         "已同意撤回，素材回到作者私有区",
     );
+}
+
+// ---- 本题标记（2.4.0）----
+function markForPuzzle(row) {
+    if (!props.puzzleKey) return;
+    return run(
+        row,
+        "mark",
+        () => markPuzzleMedia(props.puzzleKey, row.id),
+        "已归入本题使用列表",
+    );
+}
+
+function unmarkForPuzzle(row) {
+    if (!props.puzzleKey) return;
+    return run(
+        row,
+        "unmark",
+        () => unmarkPuzzleMedia(props.puzzleKey, row.id),
+        "已从本题使用列表移除",
+    );
+}
+
+// ---- admin：素材使用反查（2.4.0）----
+const usage = reactive({
+    visible: false,
+    loading: false,
+    row: null,
+    items: [],
+});
+
+const RELATION_LABEL = {
+    author: "作者自己的题",
+    admin: "管理员题目",
+    other: "其他出题人",
+};
+
+async function openUsage(row) {
+    usage.row = row;
+    usage.items = [];
+    usage.visible = true;
+    usage.loading = true;
+    try {
+        const data = await getMediaUsage(row.id, { limit: 200 });
+        usage.items = Array.isArray(data?.items) ? data.items : [];
+    } catch (error) {
+        ElMessage.error(describeApiError(error, { fallback: "引用查询失败" }));
+    } finally {
+        usage.loading = false;
+    }
 }
 
 // ---- 编辑 ----
@@ -192,9 +272,11 @@ function fmtTime(value) {
     )}:${pad(date.getMinutes())}`;
 }
 
-// 待审撤回的行整行高亮，便于管理员在长列表里扫出来
+// 待审撤回的行整行高亮，非法引用淡红，便于在长列表里扫出来
 function rowClassName({ row }) {
-    return row?.withdrawRequestedAt ? "is-withdraw-pending" : "";
+    if (row?.withdrawRequestedAt) return "is-withdraw-pending";
+    if (isInvalid(row)) return "is-invalid-ref";
+    return "";
 }
 </script>
 
@@ -216,6 +298,26 @@ function rowClassName({ row }) {
                 <template #default="{ row }">
                     <div>{{ row.filename || "—" }}</div>
                     <div v-if="row.note" class="sub">{{ row.note }}</div>
+                    <!-- 已使用视图：这一条为什么会被算进来 -->
+                    <div v-if="isUsedView" class="sub">
+                        <el-tag v-if="pageUsed(row)" size="small" type="primary" effect="plain">
+                            页面使用
+                        </el-tag>
+                        <el-tag v-if="marked(row)" size="small" type="warning" effect="plain">
+                            标记
+                        </el-tag>
+                        <el-tag v-if="isInvalid(row)" size="small" type="danger">失效</el-tag>
+                    </div>
+                    <div v-if="isInvalid(row) && row.invalidReason" class="sub danger">
+                        {{ row.invalidReason }}
+                    </div>
+                    <!-- 已使用视图：引用位置（便于去页面里定位） -->
+                    <div v-if="isUsedView && row.refs?.length" class="sub">
+                        <span v-for="(ref, i) in row.refs.slice(0, 3)" :key="i">
+                            {{ i > 0 ? "、" : "" }}{{ ref.where || ref.path || "页面" }}
+                        </span>
+                        <span v-if="row.refs.length > 3">…</span>
+                    </div>
                 </template>
             </el-table-column>
             <el-table-column label="类型" width="80">
@@ -240,7 +342,19 @@ function rowClassName({ row }) {
                     </span>
                 </template>
             </el-table-column>
-            <el-table-column label="他人可用" width="90">
+            <!-- 本题可用：显示与本题的关系 -->
+            <el-table-column v-if="isPuzzleView" label="本题" width="130">
+                <template #default="{ row }">
+                    <el-tag v-if="pageUsed(row)" size="small" type="primary" effect="plain">
+                        页面使用
+                    </el-tag>
+                    <el-tag v-if="marked(row)" size="small" type="warning" effect="plain">
+                        已标记
+                    </el-tag>
+                    <span v-if="!pageUsed(row) && !marked(row)" class="tip">—</span>
+                </template>
+            </el-table-column>
+            <el-table-column v-else label="他人可用" width="90">
                 <template #default="{ row }">
                     <el-tag v-if="Number(row.allowShare)" size="small" type="warning">
                         已允许
@@ -269,8 +383,30 @@ function rowClassName({ row }) {
                     <span v-else class="tip">—</span>
                 </template>
             </el-table-column>
-            <el-table-column label="操作" min-width="220" fixed="right">
+            <el-table-column label="操作" min-width="240" fixed="right">
                 <template #default="{ row }">
+                    <!-- 本题可用 / 已使用：标记与取消标记 -->
+                    <el-button
+                        v-if="(isPuzzleView || isUsedView) && !marked(row)"
+                        size="small"
+                        text
+                        type="primary"
+                        :loading="busyId === `${row.id}:mark`"
+                        @click="markForPuzzle(row)"
+                    >
+                        标记本题
+                    </el-button>
+                    <el-button
+                        v-if="(isPuzzleView || isUsedView) && marked(row)"
+                        size="small"
+                        text
+                        type="warning"
+                        :loading="busyId === `${row.id}:unmark`"
+                        @click="unmarkForPuzzle(row)"
+                    >
+                        取消标记
+                    </el-button>
+
                     <el-button
                         v-if="canEdit(row)"
                         size="small"
@@ -279,6 +415,15 @@ function rowClassName({ row }) {
                         @click="openEdit(row)"
                     >
                         编辑
+                    </el-button>
+                    <el-button
+                        v-if="auth.isAdmin"
+                        size="small"
+                        text
+                        type="info"
+                        @click="openUsage(row)"
+                    >
+                        引用
                     </el-button>
                     <el-button
                         v-if="canCollect(row)"
@@ -343,6 +488,56 @@ function rowClassName({ row }) {
             </el-table-column>
         </el-table>
 
+        <!-- admin：素材使用反查 -->
+        <el-dialog v-model="usage.visible" title="素材引用情况" width="680px">
+            <p v-if="usage.row" class="sub">
+                #{{ usage.row.id }} {{ usage.row.filename || "" }}
+            </p>
+            <div v-loading="usage.loading">
+                <el-table :data="usage.items" size="small" border max-height="360">
+                    <template #empty>
+                        <span class="tip">没有任何题目引用或标记该素材</span>
+                    </template>
+                    <el-table-column label="题目" min-width="200">
+                        <template #default="{ row }">
+                            <div>{{ row.title || row.puzzleKey }}</div>
+                            <div class="sub">{{ row.puzzleKey }}</div>
+                        </template>
+                    </el-table-column>
+                    <el-table-column label="关系" width="120">
+                        <template #default="{ row }">
+                            <el-tag
+                                size="small"
+                                :type="row.relation === 'other' ? 'warning' : 'info'"
+                                effect="plain"
+                            >
+                                {{ RELATION_LABEL[row.relation] || row.relation || "—" }}
+                            </el-tag>
+                        </template>
+                    </el-table-column>
+                    <el-table-column label="引用位置" min-width="180">
+                        <template #default="{ row }">
+                            <template v-if="row.refs?.length">
+                                <div v-for="(ref, i) in row.refs" :key="i" class="sub">
+                                    {{ ref.where || ref.path || "页面" }}
+                                </div>
+                            </template>
+                            <span v-else class="tip">—</span>
+                        </template>
+                    </el-table-column>
+                    <el-table-column label="仅标记" width="90">
+                        <template #default="{ row }">
+                            <el-tag v-if="row.marked" size="small" type="warning">是</el-tag>
+                            <span v-else class="tip">—</span>
+                        </template>
+                    </el-table-column>
+                </el-table>
+            </div>
+            <template #footer>
+                <el-button @click="usage.visible = false">关闭</el-button>
+            </template>
+        </el-dialog>
+
         <el-dialog v-model="dialog.visible" title="编辑素材" width="460px">
             <el-form label-width="100px">
                 <el-form-item label="展示名" required>
@@ -393,6 +588,10 @@ function rowClassName({ row }) {
     line-height: 1.6;
 }
 
+.danger {
+    color: var(--el-color-danger);
+}
+
 .owner {
     margin-left: 6px;
 }
@@ -400,5 +599,10 @@ function rowClassName({ row }) {
 /* 待审撤回：整行淡黄底，方便管理员扫出待处理项 */
 .media-table :deep(.is-withdraw-pending) {
     --el-table-tr-bg-color: var(--el-color-warning-light-9);
+}
+
+/* 非法引用：整行淡红底 */
+.media-table :deep(.is-invalid-ref) {
+    --el-table-tr-bg-color: var(--el-color-danger-light-9);
 }
 </style>
