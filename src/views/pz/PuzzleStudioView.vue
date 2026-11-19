@@ -14,6 +14,7 @@ import { useAuthStore } from "@/stores/auth";
 import PageForm from "@/components/pz/PageForm.vue";
 import PuzzleMetaForm from "@/components/pz/PuzzleMetaForm.vue";
 import MediaPanel from "@/components/pz/MediaPanel.vue";
+import MediaLibraryPanel from "@/components/pz/MediaLibraryPanel.vue";
 import WidgetPanel from "@/components/pz/WidgetPanel.vue";
 import FolderPanel from "@/components/pz/FolderPanel.vue";
 import HintsPanel from "@/components/pz/HintsPanel.vue";
@@ -446,6 +447,9 @@ async function onWidgetPublished({ name, referencesUpdated }) {
                         :puzzle-key="selectedKey"
                         @changed="media = $event"
                     />
+                </el-tab-pane>
+                <el-tab-pane label="素材库" name="library">
+                    <MediaLibraryPanel />
                 </el-tab-pane>
                 <el-tab-pane label="提示" name="hints">
                     <!-- 提示保存也会让 page_rev +1：按服务端 rev 重取一次页面草稿 -->

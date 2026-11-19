@@ -51,22 +51,32 @@ export const listWidgets = (options) => get("/admin/pz/widgets", undefined, opti
 export const getWidgetSource = (name, version) =>
     get(`/admin/pz/widgets/${key(name)}/source/${key(version)}`);
 
-// ---------- 素材（两步直传） ----------
+// ---------- 素材（两步直传；mistarg.2.3.0 起素材与题目分离） ----------
+//
+// 素材归出题人所有，分「私有 private / 公共 public」两区：
+//   · 私有：本人 + admin 可上传 / 修改 / 在题内引用（要求该题作者 = 素材所有人）；
+//   · 公共：所有出题人可引用，只有 admin 能上传或修改。
+// 归属不再由题目决定（sign / confirm 已移除 puzzleKey）。
 
 // 第一步：拿直传地址。返回 upload：{ objectKey, url, method, headers, expiresAt }
 // url 含临时授权：不要打日志、不要持久化、不要进缓存。
-export const signMedia = ({ puzzleKey, filename, mime, sizeBytes }) =>
+// scope 默认 private；public 仅 admin 可直传公共区。
+// ownerId 仅 admin 可用（代传到指定出题人名下，scope=public 时禁止）。
+export const signMedia = ({ filename, mime, sizeBytes, scope, ownerId }) =>
     post("/admin/pz/media/sign", {
-        puzzleKey,
         filename,
         mime,
         sizeBytes,
+        ...(scope ? { scope } : {}),
+        ...(ownerId ? { ownerId } : {}),
     });
 
 // 第二步：直传完成后确认并登记。幂等 —— 重复确认同一 objectKey 返回已有素材。
-// 返回 media：{ id, url, mime, sizeBytes, filename, mediaType }
+// 归属由服务端从 objectKey 解析，前端不要自拼。
+// 返回 media：{ id, url, mime, sizeBytes, filename, mediaType, status,
+//               scope, ownerId, ownerUsername, allowShare, withdrawRequestedAt, note }
+// url 是管理端预览路径 /api/admin/pz/media/<id>，要带 Bearer 取 blob。
 export const confirmMedia = ({
-    puzzleKey,
     objectKey,
     filename,
     mime,
@@ -75,7 +85,6 @@ export const confirmMedia = ({
     note,
 }) =>
     post("/admin/pz/media/confirm", {
-        puzzleKey,
         objectKey,
         filename,
         mime,
@@ -84,10 +93,30 @@ export const confirmMedia = ({
         note,
     });
 
-// 某题已登记的素材清单（页面里用 assetId 引用它们）。
+// 素材清单：按维度查询（mistarg.2.4.0 起 view=mine 已移除，改用 view=owner）。
+//   view=owner（默认）我的素材；admin 可用 ownerId 指定他人
+//   view=public 公共素材；view=usable 所有可引用素材
+//   view=puzzle 某题可用（必填 puzzleKey，admin 编辑他人题时按题作者取）
+//   allowShare=1 只看已允许他人使用的；withdrawRequested=1（admin）待审撤回
 // options 目前只有 signal：切题时由 requestLatest 中断上一次请求
-export const listMedia = (puzzleKey, options) =>
-    get("/admin/pz/media", { puzzleKey }, options);
+export const listMedia = (params = {}, options) =>
+    get("/admin/pz/media", params, options);
+
+// 修改素材：filename / note / status / allowShare；
+// admin 另可用 scope 收录（private→public，要求 allowShare=true）或下架（public→private）、
+// 用 ownerId 改私有素材归属。
+export const updateMedia = (id, body) => put(`/admin/pz/media/${id}`, body);
+
+// 撤回流程（仅公共素材）：作者申请 / 撤销；admin 用同一个 DELETE 驳回申请。
+export const requestMediaWithdraw = (id) =>
+    post(`/admin/pz/media/${id}/withdraw`);
+
+export const cancelMediaWithdraw = (id) =>
+    del(`/admin/pz/media/${id}/withdraw`);
+
+// admin 同意撤回：素材回到原作者私有，并清掉 allowShare 与申请。
+export const approveMediaWithdraw = (id) =>
+    post(`/admin/pz/media/${id}/withdraw/approve`);
 
 // 直传本体：按 sign 返回的方式把文件 PUT 到对象存储（不经过后端）。
 // 返回 { promise }，promise 在 2xx 时 resolve；onProgress 收到 0–100。

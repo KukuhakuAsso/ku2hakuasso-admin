@@ -8,8 +8,8 @@
 //
 // 与玩家端 api/errors.js 保持同一套口径（两个子项目各自独立构建，无法共享源码）。
 //
-// 文件末尾另有「账号级处罚角色门槛」的判定（mistarg.2.2.3），
-// 只给按钮置灰与 title 用，不参与这里的错误体解析。
+// 文件末尾另有「账号级处罚角色门槛」的判定（mistarg.2.2.3）与机读原因读取，
+// 前者只给按钮置灰与 title 用，不参与这里的错误体解析。
 
 const DEFAULT_ERROR_MESSAGE = "请求失败，请稍后重试";
 
@@ -113,6 +113,27 @@ export function describeApiError(
 ) {
     if (source?.status === 403) return forbidden;
     return extractErrorMessage(source, fallback);
+}
+
+// ---------------------------------------------------------------------------
+// 机读原因（detail.reason_code）
+//
+// 有些接口同一个状态码对应多种业务含义（例如素材撤回的 409：既可能是
+// 「该素材不在公共区」也可能是「没有待审申请」），这类场景按 reason_code 分支。
+// ApiError 的 detail 就是响应体的 error 对象，reason_code 可能在这一层，
+// 也可能在更下一层的 detail 里，两层都认。
+// ---------------------------------------------------------------------------
+export function errorReasonCode(source) {
+    const payload = resolveErrorPayload(source);
+    const detail = payload.error?.detail ?? payload.detail ?? {};
+    const inner = detail?.detail;
+    const code =
+        inner?.reason_code ||
+        inner?.reasonCode ||
+        detail?.reason_code ||
+        detail?.reasonCode ||
+        "";
+    return String(code || "");
 }
 
 // ---------------------------------------------------------------------------
