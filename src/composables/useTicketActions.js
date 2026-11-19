@@ -11,6 +11,7 @@
 // 其余 403（HINT_REPLY_CLOSED / APPEAL_REPLY_CLOSED / 缺来源权限等）没有可执行的动作，
 // 这里返回 null，由调用方用 extractErrorMessage 展示后端原文。
 import { claimTicket, releaseTicket } from "@/api/msg";
+import { errorDetail, errorReasonCode } from "@/api/errors";
 import { ticketAssigneeName } from "@/utils/format";
 
 export const TICKET_ERROR_ACTION = {
@@ -21,19 +22,11 @@ export const TICKET_ERROR_ACTION = {
     RETRY: "retry",
 };
 
-// error 是 http.js 抛的 ApiError：detail 就是响应体里的 error 对象，
-// 而 reason_code / ticket 位于 error.detail 再下一层 —— 两层都兼容。
-function normalizeTicketDetail(error) {
-    const first = error?.detail || {};
-    const inner = first?.detail;
-    if (inner && typeof inner === "object") return inner;
-    return first;
-}
-
 export function describeTicketError(error) {
     const status = Number(error?.status);
-    const detail = normalizeTicketDetail(error);
-    const reason = detail.reason_code || detail.reasonCode || "";
+    // 统一错误体：error.detail 里的 reason_code / ticket（见 api/errors.js）
+    const detail = errorDetail(error);
+    const reason = errorReasonCode(error);
     const holder = ticketAssigneeName(detail.ticket) || "其他 staff";
 
     if (status === 403 && reason === "TICKET_HELD_BY_OTHER") {

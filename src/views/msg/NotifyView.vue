@@ -313,7 +313,7 @@ import {
 import { useCursorPage } from "@/composables/useCursorPage";
 import PageNav from "@/components/PageNav.vue";
 import { fmtTime, TEAM_STATUS, statusMeta } from "@/utils/format";
-import { extractErrorMessage } from "@/api/errors";
+import { describeApiError, extractErrorMessage } from "@/api/errors";
 
 const auth = useAuthStore();
 const router = useRouter();
@@ -541,14 +541,13 @@ async function sendNotify() {
     } catch (err) {
         if (err?.status === 404) {
             ElMessage.error("有收件人不存在（账号或队伍 id 无效），请刷新后重试");
-        } else if (err?.status === 409) {
-            ElMessage.error(extractErrorMessage(err, "队伍已解散，无法发送"));
-        } else if (err?.status === 400) {
-            ElMessage.error(extractErrorMessage(err, "请求不合法（收件人为空或超过 50 个）"));
-        } else if (err?.status === 403) {
-            ElMessage.error("没有 msg.notify.send 权限");
         } else {
-            ElMessage.error(extractErrorMessage(err, "发送失败"));
+            ElMessage.error(
+                describeApiError(err, {
+                    fallback: "发送失败",
+                    forbidden: "没有 msg.notify.send 权限",
+                }),
+            );
         }
     } finally {
         sending.value = false;
@@ -600,11 +599,12 @@ async function publishAnnounce() {
         // 新公告排在倒序列表最前面：已经打开过「公告历史」就顺手刷新
         if (historyLoaded.value) first();
     } catch (err) {
-        if (err?.status === 403) {
-            ElMessage.error("发布公告需要 msg.announce.publish 权限");
-        } else {
-            ElMessage.error(extractErrorMessage(err, "发布失败"));
-        }
+        ElMessage.error(
+            describeApiError(err, {
+                fallback: "发布失败",
+                forbidden: "发布公告需要 msg.announce.publish 权限",
+            }),
+        );
     } finally {
         announcing.value = false;
     }
@@ -682,11 +682,12 @@ async function publishInternal() {
         internalForm.subject = "";
         internalForm.content = "";
     } catch (err) {
-        if (err?.status === 403) {
-            ElMessage.error("发布内部公告需要 admin 权限");
-        } else {
-            ElMessage.error(extractErrorMessage(err, "发布失败"));
-        }
+        ElMessage.error(
+            describeApiError(err, {
+                fallback: "发布失败",
+                forbidden: "发布内部公告需要 admin 权限",
+            }),
+        );
     } finally {
         publishing.value = false;
     }

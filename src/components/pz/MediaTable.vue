@@ -15,7 +15,7 @@ import {
     requestMediaWithdraw,
     updateMedia,
 } from "@/api/pz";
-import { describeApiError, errorReasonCode } from "@/api/errors";
+import { describeApiError } from "@/api/errors";
 
 const props = defineProps({
     rows: { type: Array, default: () => [] },
@@ -46,24 +46,6 @@ const emptyText = computed(() => {
     return props.view === "puzzle" ? "本题还没有可用素材" : "暂无素材";
 });
 
-// 同状态码对应多种原因，按 reason_code 给准确文案
-function mediaErrorText(error, fallback) {
-    const code = errorReasonCode(error);
-    if (code === "MEDIA_SHARE_NOT_ALLOWED") {
-        return "该素材尚未允许他人使用，请先让作者打开「允许他人使用」";
-    }
-    if (code === "MEDIA_NOT_PUBLIC") {
-        return "该素材不在公共区，无需申请撤回";
-    }
-    if (code === "MEDIA_NO_WITHDRAW_REQUEST") {
-        return "撤回申请已处理，请刷新后再试";
-    }
-    if (code === "MEDIA_PUBLIC_ADMIN_ONLY") {
-        return "公共素材只能由管理员修改，你可以申请撤回";
-    }
-    return describeApiError(error, { fallback });
-}
-
 async function run(row, action, request, successText) {
     if (busyId.value) return;
     busyId.value = `${row.id}:${action}`;
@@ -72,7 +54,8 @@ async function run(row, action, request, successText) {
         ElMessage.success(successText);
         emit("refresh");
     } catch (error) {
-        ElMessage.error(mediaErrorText(error, "操作失败"));
+        // 素材类 reason_code（MEDIA_*）的文案在 api/errors.js 统一维护
+        ElMessage.error(describeApiError(error, { fallback: "操作失败" }));
     } finally {
         busyId.value = null;
     }
@@ -193,7 +176,7 @@ async function submitEdit() {
         dialog.visible = false;
         emit("refresh");
     } catch (error) {
-        ElMessage.error(mediaErrorText(error, "保存失败"));
+        ElMessage.error(describeApiError(error, { fallback: "保存失败" }));
     } finally {
         dialog.loading = false;
     }

@@ -128,22 +128,17 @@ async function submit() {
         emit("done", data);
     } catch (err) {
         const message = extractErrorMessage(err, "禁言失败");
-        // 字段级原因统一走 errors.js，别再手挖 err.detail.detail.fields
+        // 字段级原因统一走 errors.js 的 extractFieldMessage（error.detail.fields）
         const reason = extractFieldMessage(err, "reason");
         const until = extractFieldMessage(err, "until");
-        if (err?.status === 409) {
-            ElMessage.error(
-                message.includes("封禁")
-                    ? "该目标已封禁，请先解封再禁言"
-                    : message,
-            );
-        } else if (err?.status === 404) {
+        if (err?.status === 404) {
             ElMessage.error("目标不存在（账号已注销或队伍已解散）");
         } else if (reason || until) {
             reasonError.value = reason;
             untilError.value = until;
             ElMessage.error(reason || until);
         } else {
+            // 409 = 已封禁 / 目标已注销，后端 message 已能区分，直接展示
             ElMessage.error(message);
         }
     } finally {

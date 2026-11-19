@@ -35,10 +35,51 @@ export function resolveErrorPayload(source) {
     return source && typeof source === "object" ? source : {};
 }
 
-// 取出 detail.fields 原始内容（对象，或整体说明字符串）。
-function resolveErrorFields(source) {
+// 统一错误体形状（见 api.md 通用接入约定）：
+//   { ok: false, error: { code, message, detail: { fields, reason, reason_code, ... } } }
+// ApiError 的 detail 字段就是这里的 error 对象，所以再往下取一层才是 detail。
+export function errorDetail(source) {
     const payload = resolveErrorPayload(source);
-    const detail = payload.error?.detail ?? payload.detail ?? {};
+    const detail = payload.error?.detail ?? payload.detail;
+    return detail && typeof detail === "object" ? detail : {};
+}
+
+// 机读原因的文案表：同一个状态码可能对应多种业务含义（如 403 既可能是「没权限」
+// 也可能是「角色门槛」「工单被他人持有」），这些带 reason_code 的场景用稳定文案，
+// 不依赖后端中文 message，也不在调用点各写一份。
+const REASON_MESSAGES = {
+    // 工单（站内信 / 求提示 / 申诉共用）
+    TICKET_NOT_CLAIMED: "请先接手该工单再操作",
+    TICKET_CLAIMED: "该工单已被其他 staff 接手",
+    TICKET_HELD_BY_OTHER: "该工单已被其他 staff 接手，正文与附件不可见",
+    TICKET_STALE: "工单状态已变化（可能收到新的来信），请刷新后重试",
+    TICKET_WRONG_WORKBENCH: "该工单属于另一个工作台，请到对应页面处理",
+    TICKET_NOT_PROCESSING: "该工单已不在处理中（可能已被退回或办结）",
+
+    // 账号级处罚的角色门槛
+    PUNISH_TARGET_ROLE: "不能处罚同级或更高角色的账号",
+
+    // 素材（出题台的私有 / 公共区与撤回流程）
+    MEDIA_SHARE_NOT_ALLOWED: "该素材尚未允许他人使用，请先让作者打开「允许他人使用」",
+    MEDIA_PUBLIC_ADMIN_ONLY: "公共素材只能由管理员修改，可申请撤回",
+    MEDIA_NOT_PUBLIC: "该素材不在公共区，无需申请撤回",
+    MEDIA_NO_WITHDRAW_REQUEST: "撤回申请已处理，请刷新后重试",
+    MEDIA_REF_INVALID: "页面里有不可引用的素材，请清理后再保存",
+
+    // 邮件回复封口
+    APPEAL_REPLY_CLOSED: "申诉邮件不能直接回复，请到申诉工作台处理",
+    HINT_REPLY_CLOSED: "求提示邮件不能直接回复，请在提示面板处理",
+    NOTICE_REPLY_CLOSED: "该邮件为「仅通知」，不能再回复",
+};
+
+// 命中文案表时返回对应文案，否则返回空串
+export function reasonMessageOf(source) {
+    return REASON_MESSAGES[errorReasonCode(source)] || "";
+}
+
+// 取 detail.fields 原始内容（对象，或整体说明字符串）。
+function resolveErrorFields(source) {
+    const detail = errorDetail(source);
     return detail?.fields ?? null;
 }
 
@@ -75,6 +116,7 @@ export function extractFieldMessages(source) {
 }
 
 // 把错误整理成一句展示文案；source 可以是 ApiError，也可以是原始响应体。
+// 优先级：字段级原因 → reason_code 文案 → 后端 message → Error.message → fallback。
 export function extractErrorMessage(source, fallback = DEFAULT_ERROR_MESSAGE) {
     const payload = resolveErrorPayload(source);
 
@@ -85,12 +127,17 @@ export function extractErrorMessage(source, fallback = DEFAULT_ERROR_MESSAGE) {
         return fieldMessages.join("；");
     }
 
+    // 有 reason_code 时用稳定文案：同一状态码可能对应多种含义（见 REASON_MESSAGES）
+    const reasonMessage = reasonMessageOf(payload);
+    if (reasonMessage) {
+        return reasonMessage;
+    }
+
     const backendMessage = firstNonEmpty(
         payload.error?.message,
         payload.message,
         typeof payload.error === "string" ? payload.error : "",
-        payload.error?.detail?.reason,
-        payload.detail?.reason,
+        errorDetail(payload).reason,
     );
     if (backendMessage) {
         return backendMessage;
@@ -105,35 +152,28 @@ export function extractErrorMessage(source, fallback = DEFAULT_ERROR_MESSAGE) {
     return firstNonEmpty(fallback, ownMessage) || DEFAULT_ERROR_MESSAGE;
 }
 
-// 页面级收口：403 换成调用方给的功能文案（后端那句「需要 admin 权限」对运营没意义），
-// 其余情况走 extractErrorMessage，顺带拿到 detail.fields 里的字段级原因。
+// 页面级收口：403 换成调用方给的功能文案（后端那句「需要 admin 权限」对运营没意义）；
+// 但带 reason_code 或字段级原因的 403（角色门槛 / 工单持有 / 素材权限等）要保留具体原因。
 export function describeApiError(
     source,
     { fallback = DEFAULT_ERROR_MESSAGE, forbidden = "没有权限执行该操作" } = {},
 ) {
-    if (source?.status === 403) return forbidden;
+    const specific =
+        Boolean(reasonMessageOf(source)) ||
+        extractFieldMessages(resolveErrorPayload(source)).length > 0;
+    if (!specific && Number(source?.status) === 403) return forbidden;
     return extractErrorMessage(source, fallback);
 }
 
 // ---------------------------------------------------------------------------
-// 机读原因（detail.reason_code）
+// 机读原因（error.detail.reason_code）
 //
 // 有些接口同一个状态码对应多种业务含义（例如素材撤回的 409：既可能是
 // 「该素材不在公共区」也可能是「没有待审申请」），这类场景按 reason_code 分支。
-// ApiError 的 detail 就是响应体的 error 对象，reason_code 可能在这一层，
-// 也可能在更下一层的 detail 里，两层都认。
+// 路径固定为 error.detail.reason_code（见上方 errorDetail）。
 // ---------------------------------------------------------------------------
 export function errorReasonCode(source) {
-    const payload = resolveErrorPayload(source);
-    const detail = payload.error?.detail ?? payload.detail ?? {};
-    const inner = detail?.detail;
-    const code =
-        inner?.reason_code ||
-        inner?.reasonCode ||
-        detail?.reason_code ||
-        detail?.reasonCode ||
-        "";
-    return String(code || "");
+    return String(errorDetail(source)?.reason_code || "");
 }
 
 // ---------------------------------------------------------------------------
