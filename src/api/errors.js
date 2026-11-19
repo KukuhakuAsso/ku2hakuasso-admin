@@ -7,6 +7,9 @@
 // 这里三种来源都兼容：抛出的 ApiError、原始响应体、扁平的 { code, detail }。
 //
 // 与玩家端 api/errors.js 保持同一套口径（两个子项目各自独立构建，无法共享源码）。
+//
+// 文件末尾另有「账号级处罚角色门槛」的判定（mistarg.2.2.3），
+// 只给按钮置灰与 title 用，不参与这里的错误体解析。
 
 const DEFAULT_ERROR_MESSAGE = "请求失败，请稍后重试";
 
@@ -110,4 +113,35 @@ export function describeApiError(
 ) {
     if (source?.status === 403) return forbidden;
     return extractErrorMessage(source, fallback);
+}
+
+// ---------------------------------------------------------------------------
+// 账号级处罚的角色门槛（mistarg.2.2.3，2026-11-19）
+//
+// 后端只允许「角色等级严格低于自己」的账号被处罚：player < captain < staff < admin，
+// 命中时返回 403。前端只负责把按钮置灰并给出悬停原因；真被绕过就原样显示后端错误。
+// 解封 / 解禁（解除处罚）不受限；队伍级处罚口径不变，不走这里。
+// ---------------------------------------------------------------------------
+
+const ROLE_RANK = { player: 1, captain: 2, staff: 3, admin: 4 };
+
+// 角色等级：未知角色按 0（低于所有人）处理
+function roleRank(role) {
+    const name = String(role ?? "").trim().toLowerCase();
+    return ROLE_RANK[name] ?? 0;
+}
+
+// 能否处罚该目标：双方角色已知且操作者严格高于目标。
+// 角色拿不到时不拦，交给后端判定。
+export function canPunishRole(actorRole, targetRole) {
+    const actor = roleRank(actorRole);
+    const target = roleRank(targetRole);
+    if (!actor || !target) return true;
+    return actor > target;
+}
+
+// 不能处罚时的按钮提示；可以处罚返回空串（直接绑 :disabled / :title）
+export function punishRoleBlockedReason(actorRole, targetRole) {
+    if (canPunishRole(actorRole, targetRole)) return "";
+    return `不能处罚同级或更高角色的账号（目标角色：${targetRole}）`;
 }

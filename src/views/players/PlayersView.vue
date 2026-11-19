@@ -85,7 +85,15 @@
           >
             权限
           </el-button>
-          <el-button v-if="auth.isAdmin" size="small" text type="warning" @click="warnRow(row)">
+          <el-button
+            v-if="auth.isAdmin"
+            size="small"
+            text
+            type="warning"
+            :disabled="punishBlocked(row)"
+            :title="punishRoleTip(row)"
+            @click="warnRow(row)"
+          >
             警告
           </el-button>
           <el-button v-if="auth.isAdmin" size="small" text type="primary" @click="renameRow(row)">
@@ -96,6 +104,8 @@
             size="small"
             text
             :type="pick(row, 'status') === 4 ? 'success' : 'danger'"
+            :disabled="pick(row, 'status') !== 4 && punishBlocked(row)"
+            :title="pick(row, 'status') === 4 ? '' : punishRoleTip(row)"
             @click="toggleBan(row)"
           >
             {{ pick(row, "status") === 4 ? "解封" : "封禁" }}
@@ -106,9 +116,9 @@
             v-if="auth.can('moderation.mute')"
             size="small"
             text
-            :disabled="Boolean(muteBlockedReason(row))"
+            :disabled="muteBlocked(row)"
             :type="muteRecord(row.id) ? 'success' : 'warning'"
-            :title="muteBlockedReason(row)"
+            :title="muteBlockedTitle(row)"
             @click="toggleMute(row)"
           >
             {{ muteRecord(row.id) ? "解除禁言" : "禁言" }}
@@ -186,7 +196,7 @@ import { useWorkbenchBadges } from "@/composables/useWorkbenchBadges";
 import PageNav from "@/components/PageNav.vue";
 import MuteDialog from "@/components/MuteDialog.vue";
 import { pick, fmtTime, ACCOUNT_STATUS, statusMeta } from "@/utils/format";
-import { extractErrorMessage } from "@/api/errors";
+import { canPunishRole, extractErrorMessage, punishRoleBlockedReason } from "@/api/errors";
 
 const auth = useAuthStore();
 const router = useRouter();
@@ -210,12 +220,35 @@ const {
     refreshMutes,
 } = useMuteActions("account", first, { rows: list });
 
+// 账号级处罚的角色门槛（mistarg.2.2.3）：只能处罚严格低于自己的角色。
+// 这里只决定按钮是否可点 / 悬停提示；真被绕过就原样显示后端 403。
+// 解封 / 解禁是解除处罚，不受限制，所以只用在「处罚」动作上。
+function punishRoleTip(row) {
+    return punishRoleBlockedReason(auth.role, pick(row, "role"));
+}
+
+function punishBlocked(row) {
+    return !canPunishRole(auth.role, pick(row, "role"));
+}
+
 function muteBlockedReason(row) {
     if (pick(row, "status") === 4) return "已封禁，请先解封再禁言";
     if (muteState(row.id) === "unknown") {
         return "禁言状态未知（生效禁言超过 200 条），已禁用以免覆盖原处罚，请重新查询后再试";
     }
     return "";
+}
+
+// 禁言按钮的悬停提示：已禁言时是「解除禁言」，不受角色门槛限制
+function muteBlockedTitle(row) {
+    return muteBlockedReason(row) || (muteRecord(row.id) ? "" : punishRoleTip(row));
+}
+
+// 禁言按钮是否可点：已禁言时是「解除禁言」，不受角色门槛限制
+function muteBlocked(row) {
+    if (muteBlockedReason(row)) return true;
+    if (!muteRecord(row.id) && punishBlocked(row)) return true;
+    return false;
 }
 
 // 禁言成功后列表与禁言状态都要刷新，否则刚禁言的人仍显示「禁言」
