@@ -691,6 +691,31 @@ async function onWidgetPublished({ name, referencesUpdated }) {
 
 .studio__editor {
     min-height: 0;
+    overflow: hidden;
+}
+
+.studio__editor-inner {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    min-height: 0;
+}
+
+.studio__editor-tabs {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    min-height: 0;
+    margin-top: -6px;
+}
+
+.studio__editor-tabs > :deep(.el-tabs__header) {
+    flex: none;
+}
+
+.studio__editor-tabs > :deep(.el-tabs__content) {
+    flex: 1;
+    min-height: 0;
     overflow: auto;
 }
 
@@ -798,10 +823,6 @@ async function onWidgetPublished({ name, referencesUpdated }) {
     flex: 1;
     min-height: 0;
     overflow: auto;
-}
-
-.studio__editor-tabs {
-    margin-top: -6px;
 }
 
 .tip {
