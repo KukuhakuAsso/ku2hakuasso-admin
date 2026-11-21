@@ -44,6 +44,28 @@ const folders = ref([]);
 // 下方工具栏：素材库 / 组件 / 目录 / 外链来源（与具体题目无关的全局工具）
 const sideTab = ref("library");
 const sideExpanded = ref(true);
+const toolsHeight = ref(35);
+let resizeStart = null;
+
+function startToolsResize(event) {
+    if (event.button !== 0) return;
+    resizeStart = { pointerId: event.pointerId, y: event.clientY, height: toolsHeight.value };
+    event.currentTarget.setPointerCapture(event.pointerId);
+}
+
+function resizeTools(event) {
+    if (!resizeStart || resizeStart.pointerId !== event.pointerId) return;
+    const height = resizeStart.height + ((resizeStart.y - event.clientY) / window.innerHeight) * 100;
+    toolsHeight.value = Math.min(70, Math.max(30, height));
+}
+
+function stopToolsResize(event) {
+    if (resizeStart?.pointerId === event.pointerId) resizeStart = null;
+}
+
+function adjustToolsHeight(amount) {
+    toolsHeight.value = Math.min(70, Math.max(30, toolsHeight.value + amount));
+}
 // 中间栏：页面五元素 / 题目主数据 / 素材 / 提示（后两个是「每道题各自」的）
 const editorTab = ref("page");
 
@@ -398,7 +420,7 @@ async function onWidgetPublished({ name, referencesUpdated }) {
                 </el-button>
             </div>
 
-            <el-scrollbar v-loading="puzzleLoading" class="studio__list-body">
+            <el-scrollbar v-loading="puzzleLoading" class="studio__list-body" always>
                 <p v-if="!filteredPuzzles.length" class="tip">没有匹配的题目</p>
                 <!-- 2.4.1：按目录分组（扁平列表，未分组放最后） -->
                 <section
@@ -498,6 +520,30 @@ async function onWidgetPublished({ name, referencesUpdated }) {
 
         <!-- 下：素材库 / 组件 / 目录 / 外链来源（全局工具，不随选中的题变化；独占一行以容纳宽表格） -->
         <aside class="studio__side">
+            <div
+                v-show="sideExpanded"
+                class="studio__resize"
+                role="separator"
+                tabindex="0"
+                aria-label="调整全局工具栏高度"
+                aria-controls="studio-tools"
+                aria-orientation="horizontal"
+                aria-valuemin="30"
+                aria-valuemax="70"
+                :aria-valuenow="Math.round(toolsHeight)"
+                :aria-valuetext="`设定为视口高度的 ${Math.round(toolsHeight)}%`"
+                @pointerdown="startToolsResize"
+                @pointermove="resizeTools"
+                @pointerup="stopToolsResize"
+                @pointercancel="stopToolsResize"
+                @lostpointercapture="stopToolsResize"
+                @keydown.up.prevent="adjustToolsHeight(5)"
+                @keydown.down.prevent="adjustToolsHeight(-5)"
+                @keydown.home.prevent="toolsHeight = 30"
+                @keydown.end.prevent="toolsHeight = 70"
+            >
+                <span />
+            </div>
             <div class="studio__side-head">
                 <span>全局工具</span>
                 <el-button
@@ -510,7 +556,13 @@ async function onWidgetPublished({ name, referencesUpdated }) {
                     {{ sideExpanded ? "折叠" : "展开" }}
                 </el-button>
             </div>
-            <el-tabs v-show="sideExpanded" id="studio-tools" v-model="sideTab" class="studio__tabs">
+            <el-tabs
+                v-show="sideExpanded"
+                id="studio-tools"
+                v-model="sideTab"
+                class="studio__tabs"
+                :style="{ height: `${toolsHeight}vh` }"
+            >
                 <el-tab-pane label="素材库" name="library">
                     <MediaLibraryPanel />
                 </el-tab-pane>
@@ -565,14 +617,15 @@ async function onWidgetPublished({ name, referencesUpdated }) {
 .studio {
     display: flex;
     flex-direction: column;
-    min-height: calc(100vh - 100px);
+    height: calc(100vh - 100px);
 }
 
 .studio__workspace {
     display: grid;
     grid-template-columns: 220px minmax(0, 1fr);
     gap: 12px;
-    align-items: start;
+    flex: 1;
+    min-height: 0;
     margin-bottom: 12px;
 }
 
@@ -608,6 +661,39 @@ async function onWidgetPublished({ name, referencesUpdated }) {
     font-weight: 600;
 }
 
+.studio__resize {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 12px;
+    margin: -12px -12px 0;
+    cursor: ns-resize;
+    touch-action: none;
+}
+
+.studio__resize span {
+    width: 40px;
+    height: 4px;
+    border-radius: 2px;
+    background: var(--el-border-color-darker);
+}
+
+.studio__resize:focus-visible {
+    outline: 2px solid var(--el-color-primary);
+    outline-offset: -2px;
+}
+
+.studio__list {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+}
+
+.studio__editor {
+    min-height: 0;
+    overflow: auto;
+}
+
 .studio__list-head {
     display: flex;
     gap: 6px;
@@ -619,7 +705,8 @@ async function onWidgetPublished({ name, referencesUpdated }) {
 }
 
 .studio__list-body {
-    max-height: calc(100vh - 200px);
+    flex: 1;
+    min-height: 0;
 }
 
 /* 目录分组：标题比题目行更轻，避免抢视线 */
@@ -702,8 +789,14 @@ async function onWidgetPublished({ name, referencesUpdated }) {
 }
 
 .studio__tabs {
-    min-height: min(200px, 45vh);
-    max-height: 45vh;
+    display: flex;
+    flex-direction: column;
+    max-height: max(0px, calc(100vh - 180px));
+}
+
+.studio__tabs > :deep(.el-tabs__content) {
+    flex: 1;
+    min-height: 0;
     overflow: auto;
 }
 
