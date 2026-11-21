@@ -134,6 +134,27 @@ const groupedPuzzles = computed(() => {
     return result;
 });
 
+// 目录分组的折叠状态（key 为目录 key，未分组用 ""）。
+// 搜索时不生效：命中结果可能藏在折叠的目录里，一律展开显示。
+const collapsedGroups = ref(new Set());
+
+function isGroupCollapsed(key) {
+    if (keyword.value.trim()) return false;
+    return collapsedGroups.value.has(key);
+}
+
+function toggleGroup(key) {
+    const next = new Set(collapsedGroups.value);
+    if (next.has(key)) next.delete(key);
+    else next.add(key);
+    collapsedGroups.value = next;
+}
+
+// 折叠后当前题就看不见了，用它给标题行补一个提示，免得中间栏在编辑「看不见的题」
+function groupHasActive(group) {
+    return group.items.some((item) => item.key === selectedKey.value);
+}
+
 async function loadPuzzles() {
     puzzleLoading.value = true;
     try {
@@ -428,34 +449,51 @@ async function onWidgetPublished({ name, referencesUpdated }) {
                     :key="group.key || 'ungrouped'"
                     class="puzzle-group"
                 >
-                    <p class="puzzle-group__head">
-                        <span>{{ group.title }}</span>
-                        <span class="puzzle-group__count">{{ group.items.length }}</span>
-                        <el-tag v-if="!group.enabled" size="small" type="info">停用</el-tag>
-                    </p>
                     <button
-                        v-for="item in group.items"
-                        :key="item.key"
                         type="button"
-                        class="puzzle-item"
-                        :class="{ 'is-active': item.key === selectedKey }"
-                        @click="selectPuzzle(item.key)"
+                        class="puzzle-group__head"
+                        :class="{ 'is-collapsed': isGroupCollapsed(group.key) }"
+                        :aria-expanded="!isGroupCollapsed(group.key)"
+                        @click="toggleGroup(group.key)"
                     >
-                        <span class="puzzle-item__title">{{ item.title || item.key }}</span>
-                        <span class="puzzle-item__meta">
-                            {{ item.key }}
-                            <el-tag v-if="item.enabled === false" size="small" type="info">
-                                停用
-                            </el-tag>
-                        </span>
-                        <!-- 出题人隔离后，staff 只会看到自己的题；admin 用它区分归属 -->
-                        <span
-                            v-if="auth.isAdmin && item.authorUsername"
-                            class="puzzle-item__author"
+                        <span class="puzzle-group__caret" aria-hidden="true" />
+                        <span class="puzzle-group__title">{{ group.title }}</span>
+                        <span class="puzzle-group__count">{{ group.items.length }}</span>
+                        <el-tag
+                            v-if="isGroupCollapsed(group.key) && groupHasActive(group)"
+                            size="small"
+                            type="primary"
+                            effect="plain"
                         >
-                            {{ item.authorUsername }}
-                        </span>
+                            当前
+                        </el-tag>
+                        <el-tag v-if="!group.enabled" size="small" type="info">停用</el-tag>
                     </button>
+                    <div v-show="!isGroupCollapsed(group.key)">
+                        <button
+                            v-for="item in group.items"
+                            :key="item.key"
+                            type="button"
+                            class="puzzle-item"
+                            :class="{ 'is-active': item.key === selectedKey }"
+                            @click="selectPuzzle(item.key)"
+                        >
+                            <span class="puzzle-item__title">{{ item.title || item.key }}</span>
+                            <span class="puzzle-item__meta">
+                                {{ item.key }}
+                                <el-tag v-if="item.enabled === false" size="small" type="info">
+                                    停用
+                                </el-tag>
+                            </span>
+                            <!-- 出题人隔离后，staff 只会看到自己的题；admin 用它区分归属 -->
+                            <span
+                                v-if="auth.isAdmin && item.authorUsername"
+                                class="puzzle-item__author"
+                            >
+                                {{ item.authorUsername }}
+                            </span>
+                        </button>
+                    </div>
                 </section>
             </el-scrollbar>
         </aside>
@@ -743,12 +781,49 @@ async function onWidgetPublished({ name, referencesUpdated }) {
     display: flex;
     align-items: center;
     gap: 6px;
+    width: 100%;
     margin: 0 0 4px;
     padding: 2px 4px;
+    border: none;
     border-bottom: 1px dashed var(--el-border-color-lighter);
+    background: transparent;
     color: var(--el-text-color-secondary);
+    font-family: inherit;
     font-size: 12px;
     font-weight: 600;
+    text-align: left;
+    cursor: pointer;
+}
+
+.puzzle-group__head:hover {
+    color: var(--el-text-color-primary);
+}
+
+.puzzle-group__head:focus-visible {
+    outline: 2px solid var(--el-color-primary);
+    outline-offset: -2px;
+}
+
+/* 折叠箭头：展开朝下、折叠朝右 */
+.puzzle-group__caret {
+    flex: none;
+    width: 0;
+    height: 0;
+    border-top: 4px solid transparent;
+    border-bottom: 4px solid transparent;
+    border-left: 5px solid currentColor;
+    transition: transform 0.15s ease;
+    transform: rotate(90deg);
+}
+
+.puzzle-group__head.is-collapsed .puzzle-group__caret {
+    transform: rotate(0deg);
+}
+
+.puzzle-group__title {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .puzzle-group__count {
