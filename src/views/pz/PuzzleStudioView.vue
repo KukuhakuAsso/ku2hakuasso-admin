@@ -1,5 +1,5 @@
 <script setup>
-// 出题台（单页）：左选题目 → 中间编辑五元素 → 右侧管理素材 / 组件 / 目录。
+// 出题台（单页）：左选题目 → 中间编辑五元素 → 下方管理素材 / 组件 / 目录。
 //
 // 数据来源：
 //   题目主数据  GET /admin/puzzles（标题、启用、排序）
@@ -41,8 +41,31 @@ const media = ref([]);
 const widgets = ref([]);
 const folders = ref([]);
 
-// 右侧栏：素材库 / 组件 / 目录 / 外链来源（与具体题目无关的全局工具）
+// 下方工具栏：素材库 / 组件 / 目录 / 外链来源（与具体题目无关的全局工具）
 const sideTab = ref("library");
+const sideExpanded = ref(true);
+const toolsHeight = ref(35);
+let resizeStart = null;
+
+function startToolsResize(event) {
+    if (event.button !== 0) return;
+    resizeStart = { pointerId: event.pointerId, y: event.clientY, height: toolsHeight.value };
+    event.currentTarget.setPointerCapture(event.pointerId);
+}
+
+function resizeTools(event) {
+    if (!resizeStart || resizeStart.pointerId !== event.pointerId) return;
+    const height = resizeStart.height + ((resizeStart.y - event.clientY) / window.innerHeight) * 100;
+    toolsHeight.value = Math.min(70, Math.max(30, height));
+}
+
+function stopToolsResize(event) {
+    if (resizeStart?.pointerId === event.pointerId) resizeStart = null;
+}
+
+function adjustToolsHeight(amount) {
+    toolsHeight.value = Math.min(70, Math.max(30, toolsHeight.value + amount));
+}
 // 中间栏：页面五元素 / 题目主数据 / 素材 / 提示（后两个是「每道题各自」的）
 const editorTab = ref("page");
 
@@ -110,6 +133,27 @@ const groupedPuzzles = computed(() => {
     if (ungrouped.items.length) result.push(ungrouped);
     return result;
 });
+
+// 目录分组的折叠状态（key 为目录 key，未分组用 ""）。
+// 搜索时不生效：命中结果可能藏在折叠的目录里，一律展开显示。
+const collapsedGroups = ref(new Set());
+
+function isGroupCollapsed(key) {
+    if (keyword.value.trim()) return false;
+    return collapsedGroups.value.has(key);
+}
+
+function toggleGroup(key) {
+    const next = new Set(collapsedGroups.value);
+    if (next.has(key)) next.delete(key);
+    else next.add(key);
+    collapsedGroups.value = next;
+}
+
+// 折叠后当前题就看不见了，用它给标题行补一个提示，免得中间栏在编辑「看不见的题」
+function groupHasActive(group) {
+    return group.items.some((item) => item.key === selectedKey.value);
+}
 
 async function loadPuzzles() {
     puzzleLoading.value = true;
@@ -369,6 +413,7 @@ async function onWidgetPublished({ name, referencesUpdated }) {
 
 <template>
     <div class="studio">
+        <div class="studio__workspace">
         <!-- 左：题目列表 -->
         <aside class="studio__list">
             <div class="studio__list-actions">
@@ -382,7 +427,7 @@ async function onWidgetPublished({ name, referencesUpdated }) {
                 >
                     新建题目
                 </el-button>
-            </div>
+              </div>
 
             <div class="studio__list-head">
                 <el-input
@@ -396,7 +441,7 @@ async function onWidgetPublished({ name, referencesUpdated }) {
                 </el-button>
             </div>
 
-            <el-scrollbar v-loading="puzzleLoading" class="studio__list-body">
+            <el-scrollbar v-loading="puzzleLoading" class="studio__list-body" always>
                 <p v-if="!filteredPuzzles.length" class="tip">没有匹配的题目</p>
                 <!-- 2.4.1：按目录分组（扁平列表，未分组放最后） -->
                 <section
@@ -404,34 +449,51 @@ async function onWidgetPublished({ name, referencesUpdated }) {
                     :key="group.key || 'ungrouped'"
                     class="puzzle-group"
                 >
-                    <p class="puzzle-group__head">
-                        <span>{{ group.title }}</span>
-                        <span class="puzzle-group__count">{{ group.items.length }}</span>
-                        <el-tag v-if="!group.enabled" size="small" type="info">停用</el-tag>
-                    </p>
                     <button
-                        v-for="item in group.items"
-                        :key="item.key"
                         type="button"
-                        class="puzzle-item"
-                        :class="{ 'is-active': item.key === selectedKey }"
-                        @click="selectPuzzle(item.key)"
+                        class="puzzle-group__head"
+                        :class="{ 'is-collapsed': isGroupCollapsed(group.key) }"
+                        :aria-expanded="!isGroupCollapsed(group.key)"
+                        @click="toggleGroup(group.key)"
                     >
-                        <span class="puzzle-item__title">{{ item.title || item.key }}</span>
-                        <span class="puzzle-item__meta">
-                            {{ item.key }}
-                            <el-tag v-if="item.enabled === false" size="small" type="info">
-                                停用
-                            </el-tag>
-                        </span>
-                        <!-- 出题人隔离后，staff 只会看到自己的题；admin 用它区分归属 -->
-                        <span
-                            v-if="auth.isAdmin && item.authorUsername"
-                            class="puzzle-item__author"
+                        <span class="puzzle-group__caret" aria-hidden="true" />
+                        <span class="puzzle-group__title">{{ group.title }}</span>
+                        <span class="puzzle-group__count">{{ group.items.length }}</span>
+                        <el-tag
+                            v-if="isGroupCollapsed(group.key) && groupHasActive(group)"
+                            size="small"
+                            type="primary"
+                            effect="plain"
                         >
-                            {{ item.authorUsername }}
-                        </span>
+                            当前
+                        </el-tag>
+                        <el-tag v-if="!group.enabled" size="small" type="info">停用</el-tag>
                     </button>
+                    <div v-show="!isGroupCollapsed(group.key)">
+                        <button
+                            v-for="item in group.items"
+                            :key="item.key"
+                            type="button"
+                            class="puzzle-item"
+                            :class="{ 'is-active': item.key === selectedKey }"
+                            @click="selectPuzzle(item.key)"
+                        >
+                            <span class="puzzle-item__title">{{ item.title || item.key }}</span>
+                            <span class="puzzle-item__meta">
+                                {{ item.key }}
+                                <el-tag v-if="item.enabled === false" size="small" type="info">
+                                    停用
+                                </el-tag>
+                            </span>
+                            <!-- 出题人隔离后，staff 只会看到自己的题；admin 用它区分归属 -->
+                            <span
+                                v-if="auth.isAdmin && item.authorUsername"
+                                class="puzzle-item__author"
+                            >
+                                {{ item.authorUsername }}
+                            </span>
+                        </button>
+                    </div>
                 </section>
             </el-scrollbar>
         </aside>
@@ -492,10 +554,53 @@ async function onWidgetPublished({ name, referencesUpdated }) {
                 </el-tabs>
             </div>
         </section>
+      </div>
 
         <!-- 下：素材库 / 组件 / 目录 / 外链来源（全局工具，不随选中的题变化；独占一行以容纳宽表格） -->
         <aside class="studio__side">
-            <el-tabs v-model="sideTab" class="studio__tabs">
+            <div
+                v-show="sideExpanded"
+                class="studio__resize"
+                role="separator"
+                tabindex="0"
+                aria-label="调整全局工具栏高度"
+                aria-controls="studio-tools"
+                aria-orientation="horizontal"
+                aria-valuemin="30"
+                aria-valuemax="70"
+                :aria-valuenow="Math.round(toolsHeight)"
+                :aria-valuetext="`设定为视口高度的 ${Math.round(toolsHeight)}%`"
+                @pointerdown="startToolsResize"
+                @pointermove="resizeTools"
+                @pointerup="stopToolsResize"
+                @pointercancel="stopToolsResize"
+                @lostpointercapture="stopToolsResize"
+                @keydown.up.prevent="adjustToolsHeight(5)"
+                @keydown.down.prevent="adjustToolsHeight(-5)"
+                @keydown.home.prevent="toolsHeight = 30"
+                @keydown.end.prevent="toolsHeight = 70"
+            >
+                <span />
+            </div>
+            <div class="studio__side-head">
+                <span>全局工具</span>
+                <el-button
+                    size="small"
+                    text
+                    :aria-expanded="sideExpanded"
+                    aria-controls="studio-tools"
+                    @click="sideExpanded = !sideExpanded"
+                >
+                    {{ sideExpanded ? "折叠" : "展开" }}
+                </el-button>
+            </div>
+            <el-tabs
+                v-show="sideExpanded"
+                id="studio-tools"
+                v-model="sideTab"
+                class="studio__tabs"
+                :style="{ height: `${toolsHeight}vh` }"
+            >
                 <el-tab-pane label="素材库" name="library">
                     <MediaLibraryPanel />
                 </el-tab-pane>
@@ -548,16 +653,22 @@ async function onWidgetPublished({ name, referencesUpdated }) {
 
 <style scoped>
 .studio {
+    display: flex;
+    flex-direction: column;
+    height: calc(100vh - 100px);
+}
+
+.studio__workspace {
     display: grid;
-    /* 上行：题目列表 + 编辑区；下行：共享资源区（全宽） */
     grid-template-columns: 220px minmax(0, 1fr);
     gap: 12px;
-    align-items: start;
-    min-height: calc(100vh - 120px);
+    flex: 1;
+    min-height: 0;
+    margin-bottom: 12px;
 }
 
 @media (max-width: 1400px) {
-    .studio {
+    .studio__workspace {
         grid-template-columns: 200px minmax(0, 1fr);
     }
 }
@@ -572,7 +683,78 @@ async function onWidgetPublished({ name, referencesUpdated }) {
 }
 
 .studio__side {
-    grid-column: 1 / -1;
+    position: sticky;
+    bottom: 0;
+    z-index: 2;
+    margin-top: auto;
+    box-shadow: 0 -2px 8px rgb(0 0 0 / 8%);
+}
+
+.studio__side-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    color: var(--el-text-color-primary);
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.studio__resize {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 12px;
+    margin: -12px -12px 0;
+    cursor: ns-resize;
+    touch-action: none;
+}
+
+.studio__resize span {
+    width: 40px;
+    height: 4px;
+    border-radius: 2px;
+    background: var(--el-border-color-darker);
+}
+
+.studio__resize:focus-visible {
+    outline: 2px solid var(--el-color-primary);
+    outline-offset: -2px;
+}
+
+.studio__list {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+}
+
+.studio__editor {
+    min-height: 0;
+    overflow: hidden;
+}
+
+.studio__editor-inner {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    min-height: 0;
+}
+
+.studio__editor-tabs {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    min-height: 0;
+    margin-top: -6px;
+}
+
+.studio__editor-tabs > :deep(.el-tabs__header) {
+    flex: none;
+}
+
+.studio__editor-tabs > :deep(.el-tabs__content) {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
 }
 
 .studio__list-head {
@@ -586,7 +768,8 @@ async function onWidgetPublished({ name, referencesUpdated }) {
 }
 
 .studio__list-body {
-    max-height: calc(100vh - 200px);
+    flex: 1;
+    min-height: 0;
 }
 
 /* 目录分组：标题比题目行更轻，避免抢视线 */
@@ -598,12 +781,49 @@ async function onWidgetPublished({ name, referencesUpdated }) {
     display: flex;
     align-items: center;
     gap: 6px;
+    width: 100%;
     margin: 0 0 4px;
     padding: 2px 4px;
+    border: none;
     border-bottom: 1px dashed var(--el-border-color-lighter);
+    background: transparent;
     color: var(--el-text-color-secondary);
+    font-family: inherit;
     font-size: 12px;
     font-weight: 600;
+    text-align: left;
+    cursor: pointer;
+}
+
+.puzzle-group__head:hover {
+    color: var(--el-text-color-primary);
+}
+
+.puzzle-group__head:focus-visible {
+    outline: 2px solid var(--el-color-primary);
+    outline-offset: -2px;
+}
+
+/* 折叠箭头：展开朝下、折叠朝右 */
+.puzzle-group__caret {
+    flex: none;
+    width: 0;
+    height: 0;
+    border-top: 4px solid transparent;
+    border-bottom: 4px solid transparent;
+    border-left: 5px solid currentColor;
+    transition: transform 0.15s ease;
+    transform: rotate(90deg);
+}
+
+.puzzle-group__head.is-collapsed .puzzle-group__caret {
+    transform: rotate(0deg);
+}
+
+.puzzle-group__title {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .puzzle-group__count {
@@ -669,11 +889,15 @@ async function onWidgetPublished({ name, referencesUpdated }) {
 }
 
 .studio__tabs {
-    min-height: 200px;
+    display: flex;
+    flex-direction: column;
+    max-height: max(0px, calc(100vh - 180px));
 }
 
-.studio__editor-tabs {
-    margin-top: -6px;
+.studio__tabs > :deep(.el-tabs__content) {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
 }
 
 .tip {
