@@ -1,5 +1,5 @@
 <script setup>
-// 出题台（单页）：左选题目 → 中间编辑五元素 → 右侧管理素材 / 组件 / 目录。
+// 出题台（单页）：左选题目 → 中间编辑五元素 → 下方管理素材 / 组件 / 目录。
 //
 // 数据来源：
 //   题目主数据  GET /admin/puzzles（标题、启用、排序）
@@ -41,8 +41,9 @@ const media = ref([]);
 const widgets = ref([]);
 const folders = ref([]);
 
-// 右侧栏：素材库 / 组件 / 目录 / 外链来源（与具体题目无关的全局工具）
+// 下方工具栏：素材库 / 组件 / 目录 / 外链来源（与具体题目无关的全局工具）
 const sideTab = ref("library");
+const sideExpanded = ref(true);
 // 中间栏：页面五元素 / 题目主数据 / 素材 / 提示（后两个是「每道题各自」的）
 const editorTab = ref("page");
 
@@ -369,6 +370,7 @@ async function onWidgetPublished({ name, referencesUpdated }) {
 
 <template>
     <div class="studio">
+        <div class="studio__workspace">
         <!-- 左：题目列表 -->
         <aside class="studio__list">
             <div class="studio__list-actions">
@@ -382,7 +384,7 @@ async function onWidgetPublished({ name, referencesUpdated }) {
                 >
                     新建题目
                 </el-button>
-            </div>
+              </div>
 
             <div class="studio__list-head">
                 <el-input
@@ -492,10 +494,23 @@ async function onWidgetPublished({ name, referencesUpdated }) {
                 </el-tabs>
             </div>
         </section>
+      </div>
 
         <!-- 下：素材库 / 组件 / 目录 / 外链来源（全局工具，不随选中的题变化；独占一行以容纳宽表格） -->
         <aside class="studio__side">
-            <el-tabs v-model="sideTab" class="studio__tabs">
+            <div class="studio__side-head">
+                <span>全局工具</span>
+                <el-button
+                    size="small"
+                    text
+                    :aria-expanded="sideExpanded"
+                    aria-controls="studio-tools"
+                    @click="sideExpanded = !sideExpanded"
+                >
+                    {{ sideExpanded ? "折叠" : "展开" }}
+                </el-button>
+            </div>
+            <el-tabs v-show="sideExpanded" id="studio-tools" v-model="sideTab" class="studio__tabs">
                 <el-tab-pane label="素材库" name="library">
                     <MediaLibraryPanel />
                 </el-tab-pane>
@@ -548,16 +563,21 @@ async function onWidgetPublished({ name, referencesUpdated }) {
 
 <style scoped>
 .studio {
+    display: flex;
+    flex-direction: column;
+    min-height: calc(100vh - 100px);
+}
+
+.studio__workspace {
     display: grid;
-    /* 上行：题目列表 + 编辑区；下行：共享资源区（全宽） */
     grid-template-columns: 220px minmax(0, 1fr);
     gap: 12px;
     align-items: start;
-    min-height: calc(100vh - 120px);
+    margin-bottom: 12px;
 }
 
 @media (max-width: 1400px) {
-    .studio {
+    .studio__workspace {
         grid-template-columns: 200px minmax(0, 1fr);
     }
 }
@@ -572,7 +592,20 @@ async function onWidgetPublished({ name, referencesUpdated }) {
 }
 
 .studio__side {
-    grid-column: 1 / -1;
+    position: sticky;
+    bottom: 0;
+    z-index: 2;
+    margin-top: auto;
+    box-shadow: 0 -2px 8px rgb(0 0 0 / 8%);
+}
+
+.studio__side-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    color: var(--el-text-color-primary);
+    font-size: 13px;
+    font-weight: 600;
 }
 
 .studio__list-head {
@@ -669,7 +702,9 @@ async function onWidgetPublished({ name, referencesUpdated }) {
 }
 
 .studio__tabs {
-    min-height: 200px;
+    min-height: min(200px, 45vh);
+    max-height: 45vh;
+    overflow: auto;
 }
 
 .studio__editor-tabs {
