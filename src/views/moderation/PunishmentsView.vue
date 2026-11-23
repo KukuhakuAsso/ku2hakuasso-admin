@@ -54,12 +54,16 @@
         class="truncated"
       />
 
+      <p v-if="isMobile" class="mobile-hint">长按任意一行，查看该行的操作</p>
+
       <el-table
+        ref="tableRef"
         v-loading="currentState.loading"
         :data="currentState.rows"
         :row-key="rowKey"
         border
         stripe
+        @row-contextmenu="onContextMenu"
       >
         <el-table-column label="类型" width="90">
           <template #default="{ row }">
@@ -109,7 +113,7 @@
             <div class="sub">{{ fmtTime(row.punishedAt) }}</div>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="140" fixed="right">
+        <el-table-column v-if="!isMobile" label="操作" width="140" fixed="right">
           <template #default="{ row }">
             <el-button
               size="small"
@@ -123,6 +127,14 @@
           </template>
         </el-table-column>
       </el-table>
+
+      <!-- 手机端：操作列不渲染，长按行后从底部弹出动作面板 -->
+      <RowActionSheet
+        v-model="actionSheetVisible"
+        :title="actionSheetTitle"
+        :actions="actionSheetActions"
+        @select="onSheetSelect"
+      />
     </template>
   </div>
 </template>
@@ -141,7 +153,10 @@ import { unbanPlayer } from "@/api/players";
 import { unbanTeam } from "@/api/teams";
 import { fmtTime } from "@/utils/format";
 import { extractErrorMessage } from "@/api/errors";
+import { useIsMobile } from "@/composables/useMediaQuery";
+import { useRowLongPress } from "@/composables/useRowLongPress";
 import { useWorkbenchBadges } from "@/composables/useWorkbenchBadges";
+import RowActionSheet from "@/components/RowActionSheet.vue";
 
 // 处罚记录：GET /admin/mutes（staff + moderation.mute）与 GET /admin/banneds（admin）。
 // 两个接口都不分页（limit ≤ 200），行里没有记录 id —— 解禁 / 解封都用 targetType + 目标 id。
@@ -229,6 +244,49 @@ function rowLabel(row) {
     return row.teamName || `队伍 #${row.teamId}`;
   }
   return row.username || row.playerNo || `账号 #${row.accountId}`;
+}
+
+// ---- 手机端：操作列不渲染，长按行从底部弹动作面板（表格没有行点击，不用担心抢 click）----
+const isMobile = useIsMobile();
+const tableRef = ref(null);
+const actionSheetVisible = ref(false);
+
+const { activeRow, onContextMenu } = useRowLongPress({
+  tableRef,
+  getRows: () => currentState.value.rows,
+  isMobile,
+  onLongPress: () => {
+    actionSheetVisible.value = true;
+  },
+});
+
+const actionSheetActions = computed(() => {
+  const row = activeRow.value;
+  if (!row) return [];
+  const disabled = row.active === false;
+  return [
+    {
+      key: "release",
+      label: tab.value === "banneds" ? "解封" : "解除禁言",
+      type: tab.value === "banneds" ? "primary" : "success",
+      disabled,
+      hint: disabled ? "该处罚已失效，无需解除" : "",
+    },
+  ];
+});
+
+const actionSheetTitle = computed(() => {
+  const row = activeRow.value;
+  if (!row) return "";
+  const kind = row.targetType === "team" ? "队伍" : "账号";
+  const id = row.targetType === "team" ? row.teamId : row.accountId;
+  return `${rowLabel(row)}（${kind} #${id}）`;
+});
+
+function onSheetSelect(key) {
+  const row = activeRow.value;
+  actionSheetVisible.value = false;
+  if (key === "release" && row) onAction(row);
 }
 
 async function onAction(row) {

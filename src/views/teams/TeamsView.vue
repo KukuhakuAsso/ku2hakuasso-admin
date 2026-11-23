@@ -13,7 +13,16 @@
       <el-button @click="reset">重置</el-button>
     </div>
 
-    <el-table v-loading="loading" :data="list" border stripe>
+    <p v-if="isMobile" class="mobile-hint">长按任意一行，查看该行的操作</p>
+
+    <el-table
+      ref="tableRef"
+      v-loading="loading"
+      :data="list"
+      border
+      stripe
+      @row-contextmenu="onContextMenu"
+    >
       <el-table-column label="ID" prop="id" width="80" />
       <el-table-column label="队名" min-width="140">
         <template #default="{ row }">{{ row.name || "—" }}</template>
@@ -53,68 +62,33 @@
           <span v-else>—</span>
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="420" fixed="right">
+      <el-table-column v-if="!isMobile" label="操作" width="420" fixed="right">
         <template #default="{ row }">
-          <template v-if="auth.isAdmin">
-            <el-button
-              size="small"
-              text
-              type="warning"
-              :disabled="isDissolved(row)"
-              @click="warnRow(row)"
-            >
-              警告
-            </el-button>
-            <el-button
-              size="small"
-              text
-              type="primary"
-              :disabled="isDissolved(row)"
-              @click="renameRow(row)"
-            >
-              改名
-            </el-button>
-            <el-button
-              v-if="!isBanned(row)"
-              size="small"
-              text
-              type="danger"
-              :disabled="isDissolved(row)"
-              @click="openBan(row)"
-            >
-              封禁
-            </el-button>
-            <el-button v-else size="small" text type="success" @click="unbanRow(row)">
-              解封
-            </el-button>
-            <el-button
-              size="small"
-              text
-              type="danger"
-              :disabled="isDissolved(row) || isBanned(row)"
-              @click="dissolveRow(row)"
-            >
-              解散
-            </el-button>
-          </template>
-          <!-- 队伍级禁言：只拦该队成员发信，与封禁（status=4）是两套处罚；
-               已解散（1）没有主体、已封禁（4）后端会 409，禁言状态未知时操作可能覆盖原处罚 -->
           <el-button
-            v-if="auth.can('moderation.mute')"
+            v-for="action in rowActions(row)"
+            :key="action.key"
             size="small"
             text
-            :disabled="Boolean(muteBlockedReason(row))"
-            :type="muteRecord(row.id) ? 'success' : 'warning'"
-            :title="muteBlockedReason(row)"
-            @click="toggleMute(row)"
+            :type="action.type"
+            :disabled="action.disabled"
+            :title="action.hint"
+            @click="runRowAction(action.key, row)"
           >
-            {{ muteRecord(row.id) ? "解除禁言" : "禁言" }}
+            {{ action.label }}
           </el-button>
         </template>
       </el-table-column>
     </el-table>
 
     <PageNav :page="page" :has-more="hasMore" :loading="loading" @prev="prev" @next="next" />
+
+    <!-- 手机端：操作列不渲染，长按行后从底部弹出同一份动作清单 -->
+    <RowActionSheet
+      v-model="actionSheetVisible"
+      :title="actionSheetTitle"
+      :actions="actionSheetActions"
+      @select="onSheetSelect"
+    />
 
     <MuteDialog
       v-model="muteDialog.visible"
@@ -146,7 +120,7 @@
 </template>
 
 <script setup>
-import { onMounted, reactive, ref } from "vue";
+import { computed, onMounted, reactive, ref } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { useAuthStore } from "@/stores/auth";
 import {
@@ -158,9 +132,12 @@ import {
     dissolveTeam,
 } from "@/api/teams";
 import { useCursorPage } from "@/composables/useCursorPage";
+import { useIsMobile } from "@/composables/useMediaQuery";
+import { useRowLongPress } from "@/composables/useRowLongPress";
 import { useMuteActions } from "@/composables/useMuteActions";
 import { useWorkbenchBadges } from "@/composables/useWorkbenchBadges";
 import PageNav from "@/components/PageNav.vue";
+import RowActionSheet from "@/components/RowActionSheet.vue";
 import MuteDialog from "@/components/MuteDialog.vue";
 import { fmtTime, TEAM_STATUS, TEAM_STATUS_OPTIONS, statusMeta } from "@/utils/format";
 import { extractErrorMessage } from "@/api/errors";
@@ -209,6 +186,109 @@ function toggleMute(row) {
     } else {
         openMute(row, label);
     }
+}
+
+// ---- 行操作：桌面端操作列与手机端长按面板共用同一份动作清单 ----
+function rowActions(row) {
+    const dissolved = isDissolved(row);
+    const banned = isBanned(row);
+    const muted = Boolean(muteRecord(row.id));
+    const actions = [];
+    if (auth.isAdmin) {
+        actions.push({
+            key: "warn",
+            label: "警告",
+            type: "warning",
+            disabled: dissolved,
+            hint: dissolved ? "已解散，无法操作" : "",
+        });
+        actions.push({
+            key: "rename",
+            label: "改名",
+            type: "primary",
+            disabled: dissolved,
+            hint: dissolved ? "已解散，无法操作" : "",
+        });
+        actions.push(
+            banned
+                ? { key: "unban", label: "解封", type: "success" }
+                : {
+                      key: "ban",
+                      label: "封禁",
+                      type: "danger",
+                      disabled: dissolved,
+                      hint: dissolved ? "已解散，无法封禁" : "",
+                  },
+        );
+        actions.push({
+            key: "dissolve",
+            label: "解散",
+            type: "danger",
+            disabled: dissolved || banned,
+            hint: dissolved ? "已解散" : banned ? "已封禁，请先解封" : "",
+        });
+    }
+    // 队伍级禁言：只拦该队成员发信，与封禁（status=4）是两套处罚；
+    // 已解散（1）没有主体、已封禁（4）后端会 409，禁言状态未知时操作可能覆盖原处罚
+    if (auth.can("moderation.mute")) {
+        const reason = muteBlockedReason(row);
+        actions.push({
+            key: "mute",
+            label: muted ? "解除禁言" : "禁言",
+            type: muted ? "success" : "warning",
+            disabled: Boolean(reason),
+            hint: reason,
+        });
+    }
+    return actions;
+}
+
+function runRowAction(key, row) {
+    switch (key) {
+        case "warn":
+            return warnRow(row);
+        case "rename":
+            return renameRow(row);
+        case "ban":
+            return openBan(row);
+        case "unban":
+            return unbanRow(row);
+        case "dissolve":
+            return dissolveRow(row);
+        case "mute":
+            return toggleMute(row);
+        default:
+            return undefined;
+    }
+}
+
+const isMobile = useIsMobile();
+const tableRef = ref(null);
+const actionSheetVisible = ref(false);
+
+const { activeRow, onContextMenu } = useRowLongPress({
+    tableRef,
+    getRows: () => list.value,
+    isMobile,
+    onLongPress: () => {
+        actionSheetVisible.value = true;
+    },
+});
+
+const actionSheetActions = computed(() =>
+    activeRow.value ? rowActions(activeRow.value) : [],
+);
+
+const actionSheetTitle = computed(() => {
+    const row = activeRow.value;
+    if (!row) return "";
+    return row.name ? `${row.name}（#${row.id}）` : `队伍 #${row.id}`;
+});
+
+function onSheetSelect(key) {
+    const row = activeRow.value;
+    actionSheetVisible.value = false;
+    if (row) runRowAction(key, row);
 }
 
 function search() {
