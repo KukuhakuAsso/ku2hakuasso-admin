@@ -32,7 +32,53 @@ body {
 
 .toolbar {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: 12px;
     margin-bottom: 16px;
+}
+
+/* 手机端表格提示：操作列已收起，改成长按行 */
+.mobile-hint {
+    margin-bottom: 8px;
+    color: var(--el-text-color-secondary);
+    font-size: 12px;
+}
+
+/* 手机端通用兜底：页面卡片留白收窄，弹层不超出视口。
+   各页面自身的列宽 / 工具栏排布仍按页逐个调整。 */
+@media (max-width: 768px) {
+    .page-card {
+        padding: 12px;
+    }
+
+    .el-dialog {
+        --el-dialog-margin-top: 6vh;
+        max-width: calc(100vw - 24px);
+    }
+
+    .el-message-box {
+        max-width: calc(100vw - 32px);
+    }
+
+    .el-drawer {
+        max-width: 92vw;
+    }
+
+    .el-pagination {
+        flex-wrap: wrap;
+        row-gap: 8px;
+    }
+
+    /* 长按行弹操作面板：别让长按选中文字、也别弹系统菜单 */
+    .el-table__body .el-table__row {
+        -webkit-touch-callout: none;
+        -webkit-user-select: none;
+        user-select: none;
+    }
+
+    /* 站内信详情抽屉：内容多，手机上整屏显示，左右不留白 */
+    .el-drawer.msg-drawer {
+        max-width: 100vw;
+    }
 }

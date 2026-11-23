@@ -782,7 +782,7 @@ async function reportSaveError(error) {
             <el-form-item label="列表">
                 <div class="page-form__attachments">
                     <p v-if="!model.attachments.length" class="tip">
-                        还没有附件；先到右侧「素材」上传，再回来选。
+                        还没有附件；先到下方「全局工具 · 素材库」上传，再回来选。
                     </p>
                     <div
                         v-for="(item, index) in model.attachments"

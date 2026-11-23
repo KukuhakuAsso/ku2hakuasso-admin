@@ -99,12 +99,6 @@ const routes = [
         component: () => import("@/views/tips/TipsView.vue"),
       },
       {
-        // 维护操作已并入「Tips 与规则」页底部的维护卡片（仅 admin）。
-        // 旧链接保留，直接转过去；页内那条卡片本身按 admin 收口。
-        path: "maintenance",
-        redirect: "/tips",
-      },
-      {
         path: "pz",
         name: "pz",
         component: () => import("@/views/pz/PuzzleStudioView.vue"),
