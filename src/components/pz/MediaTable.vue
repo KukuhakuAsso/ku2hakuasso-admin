@@ -23,6 +23,7 @@ import {
 import { describeApiError } from "@/api/errors";
 import { useIsMobile } from "@/composables/useMediaQuery";
 import RowActionSheet from "@/components/RowActionSheet.vue";
+import MediaPreviewDialog from "@/components/pz/MediaPreviewDialog.vue";
 
 const props = defineProps({
     rows: { type: Array, default: () => [] },
@@ -46,6 +47,8 @@ const isMine = (row) =>
     String(row.ownerId) === String(auth.account?.id);
 
 const canEdit = (row) => (isPublic(row) ? auth.isAdmin : auth.isAdmin || isMine(row));
+// 预览下发口径：admin 任意；出题人自己的全部素材 + 任何公共素材；其余后端 403
+const canPreview = (row) => auth.isAdmin || isPublic(row) || isMine(row);
 const canRequestWithdraw = (row) => isPublic(row) && isMine(row) && !row.withdrawRequestedAt;
 const canCancelWithdraw = (row) => isPublic(row) && isMine(row) && Boolean(row.withdrawRequestedAt);
 const canApproveWithdraw = (row) => auth.isAdmin && Boolean(row.withdrawRequestedAt);
@@ -74,6 +77,9 @@ const emptyText = computed(() => {
 const isMobile = useIsMobile();
 const sheet = reactive({ visible: false, row: null });
 
+// 素材预览：图片/音视频内联播放，PDF/文件走下载（同一份受保护下发路径）
+const preview = reactive({ visible: false, row: null });
+
 const sheetTitle = computed(() => {
     const row = sheet.row;
     if (!row) return "";
@@ -86,6 +92,15 @@ const sheetActions = computed(() => (sheet.row ? rowActions(sheet.row) : []));
 function rowActions(row) {
     const busy = Boolean(busyId.value);
     const actions = [];
+    actions.push({
+        key: "preview",
+        label: "预览",
+        type: "primary",
+        disabled: !canPreview(row) || busy,
+        hint: canPreview(row)
+            ? "图片 / 音视频直接播放，PDF / 文件走下载"
+            : "只能预览自己的素材或公共素材",
+    });
     if (isPuzzleView.value || isUsedView.value) {
         actions.push(
             marked(row)
@@ -182,11 +197,17 @@ function openSheet(row) {
     sheet.visible = true;
 }
 
+function openPreview(row) {
+    preview.row = row;
+    preview.visible = true;
+}
+
 function onSheetSelect(key) {
     const row = sheet.row;
     sheet.visible = false;
     if (!row) return;
-    if (key === "mark") markForPuzzle(row);
+    if (key === "preview") openPreview(row);
+    else if (key === "mark") markForPuzzle(row);
     else if (key === "unmark") unmarkForPuzzle(row);
     else if (key === "edit") openEdit(row);
     else if (key === "usage") openUsage(row);
@@ -517,6 +538,16 @@ function rowClassName({ row }) {
             </el-table-column>
             <el-table-column v-if="!isMobile" label="操作" min-width="240" fixed="right">
                 <template #default="{ row }">
+                    <!-- 预览：受保护下发路径，按类型内联播放或下载 -->
+                    <el-button
+                        v-if="canPreview(row)"
+                        size="small"
+                        text
+                        type="primary"
+                        @click="openPreview(row)"
+                    >
+                        预览
+                    </el-button>
                     <!-- 本题可用 / 已使用：标记与取消标记 -->
                     <el-button
                         v-if="(isPuzzleView || isUsedView) && !marked(row)"
@@ -641,6 +672,8 @@ function rowClassName({ row }) {
             :actions="sheetActions"
             @select="onSheetSelect"
         />
+
+        <MediaPreviewDialog v-model="preview.visible" :row="preview.row" />
 
         <!-- admin：素材使用反查 -->
         <el-dialog v-model="usage.visible" title="素材引用情况" width="680px">
