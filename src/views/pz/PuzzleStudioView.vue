@@ -414,31 +414,36 @@ async function onWidgetPublished({ name, referencesUpdated }) {
 <template>
     <div class="studio">
         <div class="studio__workspace">
-        <!-- 左：题目列表 -->
+        <!-- 上：题目列表（横向胶囊条，按目录分组；选中即切换中间编辑区） -->
         <aside class="studio__list">
-            <div class="studio__list-actions">
+            <!-- 电脑端：新建题目独占一行，下面是搜索 + 刷新；手机端：搜索一行，刷新/新建/题数一行 -->
+            <div class="studio__list-head">
                 <el-button
                     v-if="canCreatePuzzle"
+                    class="studio__list-create"
                     size="small"
                     type="primary"
                     plain
-                    style="width: 100%"
                     @click="openCreate"
                 >
                     新建题目
                 </el-button>
-              </div>
-
-            <div class="studio__list-head">
                 <el-input
                     v-model="keyword"
                     size="small"
+                    class="studio__list-search"
                     placeholder="搜索 key / 标题"
                     clearable
                 />
-                <el-button size="small" :loading="puzzleLoading" @click="loadPuzzles">
+                <el-button
+                    class="studio__list-refresh"
+                    size="small"
+                    :loading="puzzleLoading"
+                    @click="loadPuzzles"
+                >
                     刷新
                 </el-button>
+                <span class="studio__list-count">{{ filteredPuzzles.length }} 题</span>
             </div>
 
             <el-scrollbar v-loading="puzzleLoading" class="studio__list-body" always>
@@ -502,7 +507,7 @@ async function onWidgetPublished({ name, referencesUpdated }) {
         <section class="studio__editor">
             <el-empty
                 v-if="!selectedKey"
-                description="从左侧选择一道题目"
+                description="从上方的题目列表选择一道题目"
             />
             <div v-else class="studio__editor-inner">
                 <header class="studio__editor-head">
@@ -639,7 +644,7 @@ async function onWidgetPublished({ name, referencesUpdated }) {
                 </el-form-item>
             </el-form>
             <p class="tip">
-                排序、提示点奖励与答案建好后在中间栏的「题目主数据」标签里填；这里只建题目主数据，页面内容保存后才会生效。
+                排序、提示点奖励与答案建好后在编辑区的「题目主数据」标签里填；这里只建题目主数据，页面内容保存后才会生效。
             </p>
             <template #footer>
                 <el-button @click="createOpen = false">取消</el-button>
@@ -652,6 +657,16 @@ async function onWidgetPublished({ name, referencesUpdated }) {
 </template>
 
 <style scoped>
+.studio__list,
+.studio__editor,
+.studio__side {
+    padding: 12px;
+    border: 1px solid var(--el-border-color-lighter);
+    border-radius: 6px;
+    background: var(--el-bg-color);
+}
+
+/* ===== 电脑端：上方「题目列表 + 编辑区」并排，下方公共区 ===== */
 .studio {
     display: flex;
     flex-direction: column;
@@ -673,15 +688,7 @@ async function onWidgetPublished({ name, referencesUpdated }) {
     }
 }
 
-.studio__list,
-.studio__editor,
-.studio__side {
-    padding: 12px;
-    border: 1px solid var(--el-border-color-lighter);
-    border-radius: 6px;
-    background: var(--el-bg-color);
-}
-
+/* 公共区贴在底部：内容不足时也不上浮 */
 .studio__side {
     position: sticky;
     bottom: 0;
@@ -732,6 +739,109 @@ async function onWidgetPublished({ name, referencesUpdated }) {
     overflow: hidden;
 }
 
+/* 列表头部：新建题目独占一行，下面是搜索 + 刷新 */
+.studio__list-head {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 6px 8px;
+    margin-bottom: 8px;
+}
+
+.studio__list-head .el-button {
+    margin-left: 0;
+}
+
+.studio__list-create {
+    grid-column: 1 / -1;
+    width: 100%;
+}
+
+/* 题数只在手机端出现：电脑端列表是 220px 窄栏，放不下也没必要 */
+.studio__list-count {
+    display: none;
+    color: var(--el-text-color-secondary);
+    font-size: 12px;
+    white-space: nowrap;
+}
+
+.studio__list-body {
+    flex: 1;
+    min-height: 0;
+}
+
+/* ===== 手机端：上（题目列表）中（编辑区）下（公共区），整页滚动、各块不压缩 ===== */
+@media (max-width: 768px) {
+    .studio {
+        height: auto;
+        gap: 12px;
+        /* 列表体的封顶高度：列表体与 el-scrollbar 内部的 wrap 必须同时限高才会滚 */
+        --studio-list-max: min(280px, 30vh);
+    }
+
+    .studio__workspace {
+        display: flex;
+        flex: none;
+        flex-direction: column;
+        gap: 12px;
+        margin-bottom: 0;
+    }
+
+    .studio__side {
+        position: static;
+        margin-top: 0;
+        box-shadow: none;
+    }
+
+    .studio__list {
+        display: block;
+    }
+
+    .studio__list-body {
+        max-height: var(--studio-list-max);
+    }
+
+    /* el-scrollbar 的 wrap 是 height:100%，父级只给 max-height 时它算不出高度、也就不会滚，
+       这里让 wrap 自己也有同一个上限，短列表时仍然按内容收缩 */
+    .studio__list-body :deep(.el-scrollbar__wrap) {
+        max-height: var(--studio-list-max);
+    }
+
+    /* 编辑区保底高度：窗口矮时靠整页滚动补足，而不是把编辑区压扁 */
+    .studio__editor {
+        height: clamp(420px, 58vh, 820px);
+    }
+
+    /* 头部：搜索独占一行，刷新 / 新建 / 题数 成组靠右换到下一行 */
+    .studio__list-head {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 8px;
+    }
+
+    .studio__list-search {
+        order: 1;
+        flex: 1 1 100%;
+        min-width: 0;
+        max-width: none;
+    }
+
+    .studio__list-head .studio__list-refresh {
+        order: 2;
+        margin-left: auto;
+    }
+
+    .studio__list-create {
+        order: 3;
+        width: auto;
+    }
+
+    .studio__list-count {
+        order: 4;
+        display: inline;
+    }
+}
+
 .studio__editor-inner {
     display: flex;
     flex-direction: column;
@@ -755,21 +865,6 @@ async function onWidgetPublished({ name, referencesUpdated }) {
     flex: 1;
     min-height: 0;
     overflow: auto;
-}
-
-.studio__list-head {
-    display: flex;
-    gap: 6px;
-    margin-bottom: 8px;
-}
-
-.studio__list-actions {
-    margin-bottom: 8px;
-}
-
-.studio__list-body {
-    flex: 1;
-    min-height: 0;
 }
 
 /* 目录分组：标题比题目行更轻，避免抢视线 */

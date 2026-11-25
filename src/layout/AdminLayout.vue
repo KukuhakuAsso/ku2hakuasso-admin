@@ -1,9 +1,29 @@
 <template>
   <el-container class="layout">
-    <el-aside width="220px" class="aside">
+    <!-- 手机端：侧栏改为抽屉，点遮罩关闭 -->
+    <transition name="backdrop">
+      <div
+        v-if="isMobile && mobileNavOpen"
+        class="aside-backdrop"
+        @click="mobileNavOpen = false"
+      />
+    </transition>
+
+    <el-aside
+      :width="asideWidth"
+      class="aside"
+      :class="{
+        'is-collapsed': menuCollapsed,
+        'is-open': mobileNavOpen,
+      }"
+      :inert="isMobile && !mobileNavOpen ? '' : null"
+    >
       <div class="brand">
-        <span class="brand-title">空白解谜组</span>
-        <span class="brand-sub">管理后台</span>
+        <span class="brand-mark">空</span>
+        <span v-if="!menuCollapsed" class="brand-text">
+          <span class="brand-title">空白解谜组</span>
+          <span class="brand-sub">管理后台</span>
+        </span>
       </div>
       <el-menu
         :default-active="activePath"
@@ -12,29 +32,44 @@
         text-color="#c7ccd4"
         active-text-color="#ffffff"
         class="menu"
+        :collapse="menuCollapsed"
+        :collapse-transition="false"
+        @select="onMenuSelect"
       >
         <el-menu-item index="/dashboard">
-          <el-icon><DataBoard /></el-icon><span>仪表盘</span>
+          <el-icon><DataBoard /></el-icon>
+          <template #title>仪表盘</template>
         </el-menu-item>
         <el-menu-item index="/players">
-          <el-icon><User /></el-icon><span>玩家管理</span>
+          <el-icon><User /></el-icon>
+          <template #title>玩家管理</template>
         </el-menu-item>
         <el-menu-item index="/teams">
-          <el-icon><OfficeBuilding /></el-icon><span>队伍管理</span>
+          <el-icon><OfficeBuilding /></el-icon>
+          <template #title>队伍管理</template>
         </el-menu-item>
         <!-- 站内信工作台：原「提示工作台」「申诉工作台」已并入本页（抽屉里按来源给动作面板），
              所以入口按「来信 / 公告 / 求提示 / 申诉」任一权限收口，角标也是三条合并后的一个数。 -->
-        <el-menu-item v-if="canMsgWorkbench" index="/letters/messages">
-          <el-icon><Message /></el-icon><span>站内信工作台</span>
-          <span v-if="badges.totalBadge" class="menu-badge">
-            {{ badges.totalBadge }}
-          </span>
+        <el-menu-item
+          v-if="canMsgWorkbench"
+          index="/letters/messages"
+          :class="{ 'has-badge': badges.totalBadge }"
+        >
+          <el-icon><Message /></el-icon>
+          <template #title>
+            <span>站内信工作台</span>
+            <span v-if="badges.totalBadge" class="menu-badge">
+              {{ badges.totalBadge }}
+            </span>
+          </template>
         </el-menu-item>
         <el-menu-item v-if="canNotify" index="/notify">
-          <el-icon><Promotion /></el-icon><span>定向通知与公告</span>
+          <el-icon><Promotion /></el-icon>
+          <template #title>定向通知与公告</template>
         </el-menu-item>
         <el-menu-item v-if="canViewPunishments" index="/punishments">
-          <el-icon><Warning /></el-icon><span>处罚记录</span>
+          <el-icon><Warning /></el-icon>
+          <template #title>处罚记录</template>
         </el-menu-item>
         <el-sub-menu v-if="auth.isAdmin" index="progress-group">
           <template #title>
@@ -45,26 +80,46 @@
           <el-menu-item index="/progress/submissions">提交历史</el-menu-item>
         </el-sub-menu>
         <el-menu-item index="/audit">
-          <el-icon><Document /></el-icon><span>审计日志</span>
+          <el-icon><Document /></el-icon>
+          <template #title>审计日志</template>
         </el-menu-item>
         <el-menu-item index="/tips">
-          <el-icon><Coin /></el-icon><span>Tips 与规则</span>
+          <el-icon><Coin /></el-icon>
+          <template #title>Tips 与规则</template>
         </el-menu-item>
         <el-menu-item v-if="auth.can('pz.content.edit')" index="/pz">
-          <el-icon><EditPen /></el-icon><span>出题台</span>
+          <el-icon><EditPen /></el-icon>
+          <template #title>出题台</template>
         </el-menu-item>
         <el-menu-item index="/milestones">
-          <el-icon><Flag /></el-icon><span>里程碑</span>
+          <el-icon><Flag /></el-icon>
+          <template #title>里程碑</template>
         </el-menu-item>
         <el-menu-item v-if="auth.isAdmin" index="/permissions">
-          <el-icon><Lock /></el-icon><span>权限管理</span>
+          <el-icon><Lock /></el-icon>
+          <template #title>权限管理</template>
         </el-menu-item>
       </el-menu>
     </el-aside>
 
-    <el-container>
+    <el-container class="body">
       <el-header class="header">
-        <div class="header-title">{{ currentTitle }}</div>
+        <div class="header-left">
+          <el-button
+            class="nav-toggle"
+            text
+            :aria-label="toggleLabel"
+            :aria-expanded="isMobile ? mobileNavOpen : !collapsed"
+            @click="onToggleNav"
+          >
+            <el-icon :size="18">
+              <Menu v-if="isMobile" />
+              <Expand v-else-if="collapsed" />
+              <Fold v-else />
+            </el-icon>
+          </el-button>
+          <div class="header-title">{{ currentTitle }}</div>
+        </div>
         <div class="header-user">
           <el-tag size="small" :type="auth.isAdmin ? 'danger' : 'warning'" effect="dark">
             {{ auth.isAdmin ? "admin" : "staff" }}
@@ -81,15 +136,70 @@
 </template>
 
 <script setup>
-import { computed, onBeforeUnmount, onMounted, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { ElMessage } from "element-plus";
 import { useAuthStore } from "@/stores/auth";
+import { useIsMobile } from "@/composables/useMediaQuery";
 import { useWorkbenchBadges } from "@/composables/useWorkbenchBadges";
 
 const route = useRoute();
 const router = useRouter();
 const auth = useAuthStore();
+
+// ---------- 侧栏展开 / 收起 ----------
+// 桌面端：折叠成 64px 图标栏，状态存 localStorage，刷新后保持；
+// 手机端：侧栏变成抽屉，默认隐藏，由顶栏按钮打开（与折叠状态互不影响）。
+const COLLAPSE_KEY = "admin.layout.navCollapsed";
+
+const isMobile = useIsMobile();
+const mobileNavOpen = ref(false);
+const collapsed = ref(readCollapsed());
+
+const menuCollapsed = computed(() => !isMobile.value && collapsed.value);
+const asideWidth = computed(() => {
+    if (isMobile.value) return "260px";
+    return collapsed.value ? "64px" : "220px";
+});
+const toggleLabel = computed(() => {
+    if (isMobile.value) return mobileNavOpen.value ? "关闭菜单" : "打开菜单";
+    return collapsed.value ? "展开侧栏" : "收起侧栏";
+});
+
+function readCollapsed() {
+    try {
+        return localStorage.getItem(COLLAPSE_KEY) === "1";
+    } catch {
+        return false;
+    }
+}
+
+function onToggleNav() {
+    if (isMobile.value) mobileNavOpen.value = !mobileNavOpen.value;
+    else collapsed.value = !collapsed.value;
+}
+
+// 抽屉里点菜单就关（点当前页时路由不变，所以不能只靠路由监听）
+function onMenuSelect() {
+    if (isMobile.value) mobileNavOpen.value = false;
+}
+
+// 回到桌面端时抽屉没有意义，直接收起
+watch(isMobile, (mobile) => {
+    if (!mobile) mobileNavOpen.value = false;
+});
+
+function onKeydown(event) {
+    if (event.key === "Escape" && mobileNavOpen.value) mobileNavOpen.value = false;
+}
+
+watch(collapsed, (value) => {
+    try {
+        localStorage.setItem(COLLAPSE_KEY, value ? "1" : "0");
+    } catch {
+        // 隐私模式等场景写不进去就算了，不影响本次使用
+    }
+});
 
 const activePath = computed(() => route.path);
 const currentTitle = computed(() => route.meta.title || document.title);
@@ -135,18 +245,24 @@ const canSeeTicketBadge = computed(
 );
 
 onMounted(() => {
-    // startPolling 内部会立刻拉一次，并负责 60 秒轮询 + 可见性恢复时补拉
+    // startPolling 内部会立刻拉一次，并负责轮询 + 可见性恢复时补拉
     startPolling(() => canSeeTicketBadge.value);
+    window.addEventListener("keydown", onKeydown);
 });
 
 onBeforeUnmount(() => {
     stopPolling();
+    window.removeEventListener("keydown", onKeydown);
 });
 
 // 切页面就刷新一次：从工作台处理完返回时，角标立刻反映最新状态
 watch(
     () => route.path,
-    () => refreshBadges(canSeeTicketBadge.value),
+    () => {
+        // 手机端抽屉里点完菜单就收起
+        mobileNavOpen.value = false;
+        refreshBadges(canSeeTicketBadge.value);
+    },
 );
 
 // 权限快照变化（登录后 syncAccount / 授权被回收）：重算一遍，被收回时归零
@@ -163,44 +279,90 @@ async function onLogout() {
 <style scoped>
 .layout {
     height: 100vh;
+    /* 移动端地址栏会挤占 100vh，支持的浏览器用动态视口高度 */
+    height: 100dvh;
 }
+
 .aside {
     background-color: #001529;
     display: flex;
     flex-direction: column;
+    overflow: hidden;
+    transition: width 0.2s ease;
 }
+
 .brand {
+    flex: none;
     height: 56px;
     display: flex;
-    flex-direction: column;
-    justify-content: center;
+    align-items: center;
+    gap: 10px;
     padding: 0 16px;
     color: #fff;
+    overflow: hidden;
 }
+
+.brand-mark {
+    flex: none;
+    width: 28px;
+    height: 28px;
+    border-radius: 8px;
+    background: linear-gradient(135deg, #2f6fed, #7c4dff);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 14px;
+    font-weight: 600;
+}
+
+.brand-text {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+}
+
 .brand-title {
     font-size: 16px;
     font-weight: 600;
+    white-space: nowrap;
 }
+
 .brand-sub {
     font-size: 12px;
     color: #8a94a6;
+    white-space: nowrap;
 }
+
+/* 收起时只留 64px，品牌区居中放缩略标 */
+.aside.is-collapsed .brand {
+    justify-content: center;
+    padding: 0;
+}
+
 .menu {
     border-right: none;
     flex: 1;
     overflow-y: auto;
+    overflow-x: hidden;
 }
-.header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    border-bottom: 1px solid var(--el-border-color-light);
-    background: #fff;
+
+/* 收起成图标栏时，角标缩成图标右上角的小红点 */
+.aside.is-collapsed .has-badge :deep(.el-icon) {
+    position: relative;
 }
-.header-title {
-    font-size: 16px;
-    font-weight: 600;
+
+.aside.is-collapsed .has-badge :deep(.el-icon)::after {
+    content: "";
+    position: absolute;
+    top: -3px;
+    right: -5px;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: #e45656;
+    box-shadow: 0 0 0 2px #001529;
 }
+
 /* 侧栏角标：深色底上用强对比红，数字等宽避免位数变化时抖动 */
 .menu-badge {
     margin-left: auto;
@@ -216,15 +378,114 @@ async function onLogout() {
     font-variant-numeric: tabular-nums;
     flex: none;
 }
+
+.body {
+    min-width: 0;
+}
+
+.header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    --el-header-padding: 0 16px;
+    border-bottom: 1px solid var(--el-border-color-light);
+    background: #fff;
+}
+
+.header-left {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+}
+
+.nav-toggle {
+    flex: none;
+    padding: 8px;
+    margin-left: -8px;
+}
+
+.header-title {
+    font-size: 16px;
+    font-weight: 600;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+
 .header-user {
     display: flex;
     align-items: center;
     gap: 10px;
+    flex: none;
 }
+
 .username {
     font-size: 14px;
 }
+
 .main {
     background: #f5f7fa;
+    padding: 16px;
+}
+
+@media (max-width: 768px) {
+    .aside {
+        /* 抽屉浮在内容之上，宽度仍由 asideWidth 保持 260px */
+        position: fixed;
+        top: 0;
+        bottom: 0;
+        left: 0;
+        z-index: 1500;
+        transform: translateX(-100%);
+        transition: transform 0.24s ease;
+    }
+
+    .aside.is-open {
+        transform: translateX(0);
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+    }
+
+    .aside-backdrop {
+        position: fixed;
+        inset: 0;
+        z-index: 1499;
+        background: rgba(0, 0, 0, 0.45);
+    }
+
+    .backdrop-enter-active,
+    .backdrop-leave-active {
+        transition: opacity 0.24s ease;
+    }
+
+    .backdrop-enter-from,
+    .backdrop-leave-to {
+        opacity: 0;
+    }
+
+    .header {
+        --el-header-height: 52px;
+        --el-header-padding: 0 12px;
+    }
+
+    .header-title {
+        font-size: 15px;
+    }
+
+    .username {
+        display: none;
+    }
+
+    .main {
+        padding: 12px;
+    }
+}
+
+/* 极窄屏优先保证页面标题，角色标签让位 */
+@media (max-width: 420px) {
+    .header-user :deep(.el-tag) {
+        display: none;
+    }
 }
 </style>

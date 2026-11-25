@@ -21,6 +21,9 @@ import {
     updateMedia,
 } from "@/api/pz";
 import { describeApiError } from "@/config/errors";
+import { useIsMobile } from "@/composables/useMediaQuery";
+import RowActionSheet from "@/components/RowActionSheet.vue";
+import MediaPreviewDialog from "@/components/pz/MediaPreviewDialog.vue";
 
 const props = defineProps({
     rows: { type: Array, default: () => [] },
@@ -44,6 +47,8 @@ const isMine = (row) =>
     String(row.ownerId) === String(auth.account?.id);
 
 const canEdit = (row) => (isPublic(row) ? auth.isAdmin : auth.isAdmin || isMine(row));
+// 预览下发口径：admin 任意；出题人自己的全部素材 + 任何公共素材；其余后端 403
+const canPreview = (row) => auth.isAdmin || isPublic(row) || isMine(row);
 const canRequestWithdraw = (row) => isPublic(row) && isMine(row) && !row.withdrawRequestedAt;
 const canCancelWithdraw = (row) => isPublic(row) && isMine(row) && Boolean(row.withdrawRequestedAt);
 const canApproveWithdraw = (row) => auth.isAdmin && Boolean(row.withdrawRequestedAt);
@@ -65,6 +70,154 @@ const emptyText = computed(() => {
     if (props.view === "used") return "本题还没有使用任何素材";
     return "暂无素材";
 });
+
+// ---- 手机端行操作面板（行尾「⋯」触发）----
+// 桌面操作列是 240px 的固定列，窄屏下会把文件/归属这些中间列压没，
+// 所以在手机上收成 64px 的「⋯」，点开是底部动作面板。
+const isMobile = useIsMobile();
+const sheet = reactive({ visible: false, row: null });
+
+// 素材预览：图片/音视频内联播放，PDF/文件走下载（同一份受保护下发路径）
+const preview = reactive({ visible: false, row: null });
+
+const sheetTitle = computed(() => {
+    const row = sheet.row;
+    if (!row) return "";
+    return `#${row.id} ${row.filename || "（未命名素材）"}`;
+});
+
+const sheetActions = computed(() => (sheet.row ? rowActions(sheet.row) : []));
+
+// 桌面操作列与手机端面板共用同一份动作清单，避免两处口径漂移
+function rowActions(row) {
+    const busy = Boolean(busyId.value);
+    const actions = [];
+    actions.push({
+        key: "preview",
+        label: "预览",
+        type: "primary",
+        disabled: !canPreview(row) || busy,
+        hint: canPreview(row)
+            ? "图片 / 音视频直接播放，PDF / 文件走下载"
+            : "只能预览自己的素材或公共素材",
+    });
+    if (isPuzzleView.value || isUsedView.value) {
+        actions.push(
+            marked(row)
+                ? {
+                      key: "unmark",
+                      label: "取消标记",
+                      type: "warning",
+                      disabled: busy,
+                      hint: "从本题已使用列表移除",
+                  }
+                : {
+                      key: "mark",
+                      label: "标记本题",
+                      type: "primary",
+                      disabled: busy,
+                      hint: "归入本题已使用列表，不影响页面渲染",
+                  },
+        );
+    }
+    if (canEdit(row)) {
+        actions.push({
+            key: "edit",
+            label: "编辑",
+            type: "primary",
+            disabled: busy,
+            hint: "展示名 / 备注 / 启用状态 / 他人可用",
+        });
+    }
+    if (auth.isAdmin) {
+        actions.push({
+            key: "usage",
+            label: "引用",
+            type: "info",
+            disabled: busy,
+            hint: "查看哪些题目引用了它",
+        });
+    }
+    if (canCollect(row)) {
+        actions.push({
+            key: "collect",
+            label: "收录",
+            type: "success",
+            disabled: busy,
+            hint: "放进公共区，所有出题人都能用",
+        });
+    }
+    if (canDelist(row)) {
+        actions.push({
+            key: "delist",
+            label: "下架",
+            type: "danger",
+            disabled: busy,
+            hint: "回到作者私有区",
+        });
+    }
+    if (canRequestWithdraw(row)) {
+        actions.push({
+            key: "withdraw",
+            label: "申请撤回",
+            type: "warning",
+            disabled: busy,
+            hint: "提交后等待管理员处理",
+        });
+    }
+    if (canCancelWithdraw(row)) {
+        actions.push({
+            key: "cancel-withdraw",
+            label: "撤销申请",
+            disabled: busy,
+            hint: "放弃这次撤回，素材保持公共",
+        });
+    }
+    if (canApproveWithdraw(row)) {
+        actions.push({
+            key: "approve",
+            label: "同意撤回",
+            type: "success",
+            disabled: busy,
+            hint: "素材回到作者私有区",
+        });
+        actions.push({
+            key: "reject",
+            label: "驳回",
+            type: "info",
+            disabled: busy,
+            hint: "保持公共，拒绝这次撤回",
+        });
+    }
+    return actions;
+}
+
+function openSheet(row) {
+    sheet.row = row;
+    sheet.visible = true;
+}
+
+function openPreview(row) {
+    preview.row = row;
+    preview.visible = true;
+}
+
+function onSheetSelect(key) {
+    const row = sheet.row;
+    sheet.visible = false;
+    if (!row) return;
+    if (key === "preview") openPreview(row);
+    else if (key === "mark") markForPuzzle(row);
+    else if (key === "unmark") unmarkForPuzzle(row);
+    else if (key === "edit") openEdit(row);
+    else if (key === "usage") openUsage(row);
+    else if (key === "collect") collect(row);
+    else if (key === "delist") delist(row);
+    else if (key === "withdraw") requestWithdraw(row);
+    else if (key === "cancel-withdraw") cancelWithdraw(row);
+    else if (key === "approve") approveWithdraw(row);
+    else if (key === "reject") cancelWithdraw(row);
+}
 
 async function run(row, action, request, successText) {
     if (busyId.value) return;
@@ -383,8 +536,18 @@ function rowClassName({ row }) {
                     <span v-else class="tip">—</span>
                 </template>
             </el-table-column>
-            <el-table-column label="操作" min-width="240" fixed="right">
+            <el-table-column v-if="!isMobile" label="操作" min-width="240" fixed="right">
                 <template #default="{ row }">
+                    <!-- 预览：受保护下发路径，按类型内联播放或下载 -->
+                    <el-button
+                        v-if="canPreview(row)"
+                        size="small"
+                        text
+                        type="primary"
+                        @click="openPreview(row)"
+                    >
+                        预览
+                    </el-button>
                     <!-- 本题可用 / 已使用：标记与取消标记 -->
                     <el-button
                         v-if="(isPuzzleView || isUsedView) && !marked(row)"
@@ -486,7 +649,31 @@ function rowClassName({ row }) {
                     </el-button>
                 </template>
             </el-table-column>
+
+            <!-- 手机端：操作列收成「⋯」，点开是底部动作面板 -->
+            <el-table-column v-else label="操作" width="64" align="center" fixed="right">
+                <template #default="{ row }">
+                    <el-button
+                        class="row-more"
+                        text
+                        :disabled="!rowActions(row).length"
+                        aria-label="更多操作"
+                        @click.stop="openSheet(row)"
+                    >
+                        ⋯
+                    </el-button>
+                </template>
+            </el-table-column>
         </el-table>
+
+        <RowActionSheet
+            v-model="sheet.visible"
+            :title="sheetTitle"
+            :actions="sheetActions"
+            @select="onSheetSelect"
+        />
+
+        <MediaPreviewDialog v-model="preview.visible" :row="preview.row" />
 
         <!-- admin：素材使用反查 -->
         <el-dialog v-model="usage.visible" title="素材引用情况" width="680px">
@@ -604,5 +791,14 @@ function rowClassName({ row }) {
 /* 非法引用：整行淡红底 */
 .media-table :deep(.is-invalid-ref) {
     --el-table-tr-bg-color: var(--el-color-danger-light-9);
+}
+
+/* 手机端行尾的「⋯」：把 240px 的桌面操作列收成一个入口 */
+.row-more {
+    min-height: 36px;
+    padding: 4px 10px;
+    font-size: 20px;
+    font-weight: 700;
+    line-height: 1;
 }
 </style>

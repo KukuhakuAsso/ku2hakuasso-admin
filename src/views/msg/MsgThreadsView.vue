@@ -135,7 +135,9 @@
           {{ fmtTime(row.lastReplyAt || row.createdAt) }}
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="170" fixed="right">
+      <!-- 桌面端：完整的操作列；手机端只留一个「⋯」按钮，点开底部动作面板。
+           行点击是「查看详情」的主操作，所以这里不用长按，避免两种手势抢同一个点击。 -->
+      <el-table-column v-if="!isMobile" label="操作" width="170" fixed="right">
         <template #default="{ row }">
           <!-- pending：可以在列表里直接占位（不必先打开详情） -->
           <el-button
@@ -184,6 +186,26 @@
           </el-button>
         </template>
       </el-table-column>
+
+      <el-table-column
+        v-if="isMobile"
+        label="操作"
+        width="64"
+        align="center"
+        fixed="right"
+      >
+        <template #default="{ row }">
+          <el-button
+            class="row-more"
+            text
+            :loading="rowBusy.startsWith(`${row.mailId}:`)"
+            aria-label="更多操作"
+            @click.stop="openRowSheet(row)"
+          >
+           ...
+          </el-button>
+        </template>
+      </el-table-column>
     </el-table>
 
     <PageNav
@@ -194,8 +216,20 @@
       @next="next"
     />
 
+    <!-- 手机端：行尾「⋯」弹出，动作与桌面端操作列同源 -->
+    <RowActionSheet
+      v-model="actionSheetVisible"
+      :title="actionSheetTitle"
+      :actions="actionSheetActions"
+      @select="onSheetSelect"
+    />
+
     <!-- 邮件详情抽屉：整条会话（thread + messages，升序）+ 官方回复 -->
-    <el-drawer v-model="drawer.visible" size="620px">
+    <el-drawer
+      v-model="drawer.visible"
+      class="msg-drawer"
+      :size="isMobile ? '100%' : '620px'"
+    >
       <template #header>
         <!-- 自定义标题头：主题可能很长（甚至没有空格），必须能截断，
              否则长串会把头部的关闭按钮顶出抽屉可视区 -->
@@ -390,6 +424,7 @@ import {
   replyMail,
 } from "@/api/msg";
 import { useCursorPage } from "@/composables/useCursorPage";
+import { useIsMobile } from "@/composables/useMediaQuery";
 import { useWorkbenchBadges } from "@/composables/useWorkbenchBadges";
 import {
   TICKET_ERROR_ACTION,
@@ -398,6 +433,7 @@ import {
   releaseTicketQuietly,
 } from "@/composables/useTicketActions";
 import PageNav from "@/components/PageNav.vue";
+import RowActionSheet from "@/components/RowActionSheet.vue";
 import AttachmentGallery from "@/components/AttachmentGallery.vue";
 import TicketBar from "@/components/TicketBar.vue";
 import HintActionPanel from "@/components/msg/HintActionPanel.vue";
@@ -1063,6 +1099,71 @@ async function releaseRow(row) {
   }
 }
 
+// ---- 手机端行操作面板（「⋯」按钮触发）----
+// 行点击是「查看详情」，长按会和它抢同一个 click，所以窄屏改用显式的「⋯」入口。
+const isMobile = useIsMobile();
+const actionSheetVisible = ref(false);
+const actionSheetRow = ref(null);
+
+const actionSheetActions = computed(() =>
+  actionSheetRow.value ? rowActions(actionSheetRow.value) : [],
+);
+
+const actionSheetTitle = computed(() => {
+  const row = actionSheetRow.value;
+  if (!row) return "";
+  return `会话 #${row.mailId} · ${row.subject || "（无主题）"}`;
+});
+
+// 桌面端操作列与手机端面板共用同一份动作清单
+function rowActions(row) {
+  const status = rowTicketStatus(row);
+  const actions = [];
+  if (status === "pending") {
+    actions.push({
+      key: "claim",
+      label: "接手",
+      type: "primary",
+      hint: "接手后其他同事将无法查看内容",
+    });
+  } else if (status === "processing" && isMine(row)) {
+    actions.push({
+      key: "release",
+      label: "退出",
+      hint: "把工单退回待处理；待处理计时不会重置",
+    });
+  } else if (status === "processing" && canForceReleaseRow(row)) {
+    actions.push({
+      key: "release",
+      label: "强制退回",
+      type: "danger",
+      hint: "原处理人会被解除占用，其他同事可接手",
+    });
+  }
+  actions.push({
+    key: "open",
+    label: "查看详情",
+    type: "primary",
+    disabled: !canOpenRow(row),
+    hint: canOpenRow(row) ? "" : viewBlockedReason(row),
+  });
+  return actions;
+}
+
+function openRowSheet(row) {
+  actionSheetRow.value = row;
+  actionSheetVisible.value = true;
+}
+
+function onSheetSelect(key) {
+  const row = actionSheetRow.value;
+  actionSheetVisible.value = false;
+  if (!row) return;
+  if (key === "claim") claimRow(row);
+  else if (key === "release") releaseRow(row);
+  else if (key === "open") openRow(row);
+}
+
 // 组件是否已经卸载：初始化是异步的，await 之后可能早就离开页面了
 let disposed = false;
 
@@ -1365,5 +1466,14 @@ watch(
   display: flex;
   justify-content: flex-end;
   gap: 8px;
+}
+
+/* 手机端行尾的「⋯」：把桌面操作列收成一个入口，点开是底部动作面板 */
+.row-more {
+  min-height: 36px;
+  padding: 4px 10px;
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1;
 }
 </style>

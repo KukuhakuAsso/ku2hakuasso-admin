@@ -65,9 +65,13 @@
     <p v-if="!filters.puzzle_key" class="hint">
       按「通过时间 / 通过时长」排序需先选定一道题目；未通过的格子记「—」并排在最后。
     </p>
+    <p v-if="isMobile" class="hint">
+      左右滑动表格查看全部题目；左侧队伍列固定，滑到哪都能对上队名。
+    </p>
 
     <!-- 一行为一队、一列为一题；格子是首次通过时间或「首次通过 − 首次取题」的时长 -->
     <el-table
+      ref="tableRef"
       v-loading="loading"
       :data="teams"
       border
@@ -75,17 +79,30 @@
       size="small"
       max-height="calc(100vh - 300px)"
     >
-      <el-table-column prop="teamId" label="队伍ID" width="90" fixed="left" />
-      <el-table-column label="队名" min-width="140" fixed="left">
-        <template #default="{ row }">{{ row.name || "—" }}</template>
-      </el-table-column>
-      <el-table-column label="状态" width="90" fixed="left">
+      <!-- 队伍身份合并成一列（队名 + #ID · 状态）：原来 队伍ID/队名/状态 三列，
+           窄屏会吃掉 342px 可视区里的 320px，题目列几乎看不到；
+           桌面端同样合并，省下的宽度留给题目列 -->
+      <el-table-column label="队伍" :width="isMobile ? 104 : 180" fixed="left">
         <template #default="{ row }">
-          <el-tag :type="statusMeta(row.status, TEAM_STATUS).type" size="small">
-            {{ statusMeta(row.status, TEAM_STATUS).label }}
-          </el-tag>
+          <div class="team-cell">
+            <span class="team-name" :title="row.name || ''">
+              {{ row.name || "—" }}
+            </span>
+            <span class="team-meta">
+              #{{ row.teamId }}
+              <span
+                :class="[
+                  'team-status',
+                  `is-${statusMeta(row.status, TEAM_STATUS).type}`,
+                ]"
+              >
+                · {{ statusMeta(row.status, TEAM_STATUS).label }}
+              </span>
+            </span>
+          </div>
         </template>
       </el-table-column>
+
       <el-table-column
         v-for="p in puzzles"
         :key="p.key"
@@ -111,6 +128,10 @@
           <span v-else class="unsolved">—</span>
         </template>
       </el-table-column>
+
+      <!-- 桌面端题目列数少时右侧会剩下一段宽度：用一条等宽空列把它补满，表格边框铺满整行；
+           题目列多到需要横向滚动时不出这条列，免得滚到底多出一段空白 -->
+      <el-table-column v-if="fillerWidth > 0" :width="fillerWidth" />
     </el-table>
     <el-empty v-if="!loading && !teams.length" description="暂无数据" />
 
@@ -140,6 +161,7 @@ import {
 } from "@/utils/format";
 import { describeApiError } from "@/config/errors";
 import { isStaleRequest, requestLatest, cancelChannel } from "@/api/http";
+import { useIsMobile } from "@/composables/useMediaQuery";
 import PageNav from "@/components/PageNav.vue";
 
 // 状态取值见 api-9-admin.md：matrix 缺省按「只看正常队伍（2）」处理，
@@ -173,6 +195,27 @@ const loading = ref(false);
 const teams = ref([]);
 const puzzles = ref([]);
 const puzzleOptions = ref([]);
+const isMobile = useIsMobile();
+
+// 桌面端队伍列宽（手机端是 104）
+const TEAM_COL_WIDTH_DESKTOP = 180;
+
+// ---- 补齐表格右侧的空白 ----
+// 题目列都是固定宽度，列数少时总和会小于表格可视宽度，右边缘就会空一段；
+// 这里量出实际可视宽度（不含纵向滚动条），补一条等宽空列把边框铺满。
+// 需要横向滚动时剩余宽度 <= 0，不渲染这条列。
+const tableRef = ref(null);
+const tableBodyWidth = ref(0);
+let tableResizeObserver = null;
+
+const fillerWidth = computed(() => {
+    if (isMobile.value) return 0;
+    const used =
+        TEAM_COL_WIDTH_DESKTOP +
+        puzzles.value.reduce((sum, p) => sum + colWidth(p), 0);
+    const extra = Math.floor(tableBodyWidth.value - used);
+    return extra > 1 ? extra : 0;
+});
 
 // 指标类排序默认「最快/最早在前」，队伍排序保持旧的倒序
 function defaultOrder(sort) {
@@ -347,16 +390,37 @@ function colWidth(p) {
     const headChars = Math.max((p.title || "").length, (p.key || "").length);
     const cellChars =
         metric.value === "duration" ? 10 : crossDay.value ? 14 : 8;
+    if (isMobile.value) {
+        // 手机上固定列已压到 104px，题目列再收一收，尽量多露一列；
+        // 长标题允许换行，所以给个上限而不是按字数一直加宽
+        return Math.max(88, Math.min(headChars * 13 + 16, 140), cellChars * 7 + 16);
+    }
     return Math.max(96, headChars * 14 + 24, cellChars * 7 + 24);
 }
 
 onMounted(() => {
     loadPuzzleOptions();
     load(1);
+
+    // 表格宽度会随侧栏收起 / 窗口缩放变化：跟着量，补齐列才不会差一截
+    const wrap = tableRef.value?.$el?.querySelector(".el-scrollbar__wrap");
+    if (wrap) {
+        tableBodyWidth.value = wrap.clientWidth;
+        if (typeof ResizeObserver !== "undefined") {
+            tableResizeObserver = new ResizeObserver(() => {
+                tableBodyWidth.value = wrap.clientWidth;
+            });
+            tableResizeObserver.observe(wrap);
+        }
+    }
 });
 
 // 离开页面时中断还在飞的请求，别让它的响应落到已卸载的视图上
-onBeforeUnmount(() => cancelChannel(MATRIX_CHANNEL));
+onBeforeUnmount(() => {
+    cancelChannel(MATRIX_CHANNEL);
+    tableResizeObserver?.disconnect();
+    tableResizeObserver = null;
+});
 </script>
 
 <style scoped>
@@ -408,5 +472,45 @@ onBeforeUnmount(() => cancelChannel(MATRIX_CHANNEL));
 .unsolved {
     color: #c0c4cc;
     font-size: 12px;
+}
+
+/* 手机端唯一的固定列：队名 + #ID · 状态，两行放下，避免占满可视区 */
+.team-cell {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+    line-height: 1.3;
+}
+
+.team-name {
+    overflow: hidden;
+    font-weight: 500;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.team-meta {
+    overflow: hidden;
+    color: var(--el-text-color-secondary);
+    font-size: 11px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.team-status.is-success {
+    color: var(--el-color-success);
+}
+
+.team-status.is-warning {
+    color: var(--el-color-warning);
+}
+
+.team-status.is-danger {
+    color: var(--el-color-danger);
+}
+
+.team-status.is-info {
+    color: var(--el-text-color-secondary);
 }
 </style>

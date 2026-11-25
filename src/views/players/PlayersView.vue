@@ -22,7 +22,16 @@
       <el-button @click="reset">重置</el-button>
     </div>
 
-    <el-table v-loading="loading" :data="list" border stripe>
+    <p v-if="isMobile" class="mobile-hint">长按任意一行，查看该行的操作</p>
+
+    <el-table
+      ref="tableRef"
+      v-loading="loading"
+      :data="list"
+      border
+      stripe
+      @row-contextmenu="onContextMenu"
+    >
       <el-table-column label="ID" prop="id" width="80" />
       <el-table-column label="玩家编号" width="130">
         <template #default="{ row }">{{ pick(row, "playerNo", "player_no") || "—" }}</template>
@@ -70,64 +79,33 @@
           <span v-else>—</span>
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="480" fixed="right">
+      <el-table-column v-if="!isMobile" label="操作" width="480" fixed="right">
         <template #default="{ row }">
-          <el-button v-if="auth.isAdmin" size="small" text type="primary" @click="showContact(row)">
-            联系方式
-          </el-button>
-          <el-button size="small" text @click="showUsernames(row)">曾用名</el-button>
           <el-button
-            v-if="auth.isAdmin && pick(row, 'role') === 'staff'"
+            v-for="action in rowActions(row)"
+            :key="action.key"
             size="small"
             text
-            type="info"
-            @click="openPermissions(row)"
+            :type="action.type"
+            :disabled="action.disabled"
+            :title="action.hint"
+            @click="runRowAction(action.key, row)"
           >
-            权限
-          </el-button>
-          <el-button
-            v-if="auth.isAdmin"
-            size="small"
-            text
-            type="warning"
-            :disabled="punishBlocked(row)"
-            :title="punishRoleTip(row)"
-            @click="warnRow(row)"
-          >
-            警告
-          </el-button>
-          <el-button v-if="auth.isAdmin" size="small" text type="primary" @click="renameRow(row)">
-            改名
-          </el-button>
-          <el-button
-            v-if="auth.isAdmin"
-            size="small"
-            text
-            :type="pick(row, 'status') === 4 ? 'success' : 'danger'"
-            :disabled="pick(row, 'status') !== 4 && punishBlocked(row)"
-            :title="pick(row, 'status') === 4 ? '' : punishRoleTip(row)"
-            @click="toggleBan(row)"
-          >
-            {{ pick(row, "status") === 4 ? "解封" : "封禁" }}
-          </el-button>
-          <!-- 禁言与封禁是两套处罚：禁言只拦发信，走权限码 moderation.mute；
-               已封禁的目标后端会 409，禁言状态未知时操作可能覆盖原处罚，均直接禁用 -->
-          <el-button
-            v-if="auth.can('moderation.mute')"
-            size="small"
-            text
-            :disabled="muteBlocked(row)"
-            :type="muteRecord(row.id) ? 'success' : 'warning'"
-            :title="muteBlockedTitle(row)"
-            @click="toggleMute(row)"
-          >
-            {{ muteRecord(row.id) ? "解除禁言" : "禁言" }}
+            {{ action.label }}
           </el-button>
         </template>
       </el-table-column>
     </el-table>
 
     <PageNav :page="page" :has-more="hasMore" :loading="loading" @prev="prev" @next="next" />
+
+    <!-- 手机端：操作列不渲染，长按行后从底部弹出同一份动作清单 -->
+    <RowActionSheet
+      v-model="actionSheetVisible"
+      :title="actionSheetTitle"
+      :actions="actionSheetActions"
+      @select="onSheetSelect"
+    />
 
     <MuteDialog
       v-model="muteDialog.visible"
@@ -177,7 +155,7 @@
 </template>
 
 <script setup>
-import { onMounted, reactive, ref } from "vue";
+import { computed, onMounted, reactive, ref } from "vue";
 import { useRouter } from "vue-router";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { useAuthStore } from "@/stores/auth";
@@ -191,9 +169,12 @@ import {
     renamePlayer,
 } from "@/api/players";
 import { useCursorPage } from "@/composables/useCursorPage";
+import { useIsMobile } from "@/composables/useMediaQuery";
+import { useRowLongPress } from "@/composables/useRowLongPress";
 import { useMuteActions } from "@/composables/useMuteActions";
 import { useWorkbenchBadges } from "@/composables/useWorkbenchBadges";
 import PageNav from "@/components/PageNav.vue";
+import RowActionSheet from "@/components/RowActionSheet.vue";
 import MuteDialog from "@/components/MuteDialog.vue";
 import { pick, fmtTime, ACCOUNT_STATUS, statusMeta } from "@/utils/format";
 import { canPunishRole, extractErrorMessage, punishRoleBlockedReason } from "@/config/errors";
@@ -263,6 +244,103 @@ function toggleMute(row) {
     } else {
         openMute(row, label);
     }
+}
+
+// ---- 行操作：桌面端操作列与手机端长按面板共用同一份动作清单 ----
+// 权限、禁用条件、按钮文案只写一次，两边不会各说各话。
+function rowActions(row) {
+    const banned = pick(row, "status") === 4;
+    const muted = Boolean(muteRecord(row.id));
+    const actions = [];
+    if (auth.isAdmin) {
+        actions.push({ key: "contact", label: "联系方式", type: "primary" });
+    }
+    actions.push({ key: "usernames", label: "曾用名" });
+    if (auth.isAdmin && pick(row, "role") === "staff") {
+        actions.push({ key: "permissions", label: "权限", type: "info" });
+    }
+    if (auth.isAdmin) {
+        actions.push({
+            key: "warn",
+            label: "警告",
+            type: "warning",
+            disabled: punishBlocked(row),
+            hint: punishRoleTip(row),
+        });
+        actions.push({ key: "rename", label: "改名", type: "primary" });
+        actions.push({
+            key: "ban",
+            label: banned ? "解封" : "封禁",
+            type: banned ? "success" : "danger",
+            disabled: !banned && punishBlocked(row),
+            hint: banned ? "" : punishRoleTip(row),
+        });
+    }
+    // 禁言与封禁是两套处罚：禁言只拦发信，走权限码 moderation.mute；
+    // 已封禁的目标后端会 409，禁言状态未知时操作可能覆盖原处罚，均直接禁用
+    if (auth.can("moderation.mute")) {
+        actions.push({
+            key: "mute",
+            label: muted ? "解除禁言" : "禁言",
+            type: muted ? "success" : "warning",
+            disabled: muteBlocked(row),
+            hint: muteBlockedTitle(row),
+        });
+    }
+    return actions;
+}
+
+function runRowAction(key, row) {
+    switch (key) {
+        case "contact":
+            return showContact(row);
+        case "usernames":
+            return showUsernames(row);
+        case "permissions":
+            return openPermissions(row);
+        case "warn":
+            return warnRow(row);
+        case "rename":
+            return renameRow(row);
+        case "ban":
+            return toggleBan(row);
+        case "mute":
+            return toggleMute(row);
+        default:
+            return undefined;
+    }
+}
+
+const isMobile = useIsMobile();
+const tableRef = ref(null);
+const actionSheetVisible = ref(false);
+
+const { activeRow, onContextMenu } = useRowLongPress({
+    tableRef,
+    getRows: () => list.value,
+    isMobile,
+    onLongPress: () => {
+        actionSheetVisible.value = true;
+    },
+});
+
+const actionSheetActions = computed(() =>
+    activeRow.value ? rowActions(activeRow.value) : [],
+);
+
+const actionSheetTitle = computed(() => {
+    const row = activeRow.value;
+    if (!row) return "";
+    const name = pick(row, "username");
+    const no = pick(row, "playerNo", "player_no");
+    const suffix = no ? `#${no}` : `#${row.id}`;
+    return name ? `${name}（${suffix}）` : `玩家 ${suffix}`;
+});
+
+function onSheetSelect(key) {
+    const row = activeRow.value;
+    actionSheetVisible.value = false;
+    if (row) runRowAction(key, row);
 }
 
 function search() {
