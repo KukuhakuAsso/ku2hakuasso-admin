@@ -19,7 +19,7 @@ import {
     TICKET_ERROR_ACTION,
     describeTicketError,
 } from "@/composables/useTicketActions";
-import { extractErrorMessage } from "@/api/errors";
+import { extractErrorMessage } from "@/config/errors";
 import { HINT_STATUS, statusMeta } from "@/utils/format";
 
 const props = defineProps({

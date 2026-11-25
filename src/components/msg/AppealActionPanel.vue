@@ -16,7 +16,7 @@ import { useAuthStore } from "@/stores/auth";
 import { replyAppeal, unmuteAccount, unmuteTeam } from "@/api/moderation";
 import { unbanPlayer } from "@/api/players";
 import { unbanTeam } from "@/api/teams";
-import { extractErrorMessage } from "@/api/errors";
+import { extractErrorMessage } from "@/config/errors";
 import {
     TICKET_ERROR_ACTION,
     claimTicketQuietly,

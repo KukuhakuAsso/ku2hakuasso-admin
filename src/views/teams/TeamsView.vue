@@ -163,7 +163,7 @@ import { useWorkbenchBadges } from "@/composables/useWorkbenchBadges";
 import PageNav from "@/components/PageNav.vue";
 import MuteDialog from "@/components/MuteDialog.vue";
 import { fmtTime, TEAM_STATUS, TEAM_STATUS_OPTIONS, statusMeta } from "@/utils/format";
-import { extractErrorMessage } from "@/api/errors";
+import { extractErrorMessage } from "@/config/errors";
 
 const auth = useAuthStore();
 // 解封 = 处罚撤销：队伍会退出申诉工单的未办结集合，角标（open 数）要立刻减
@@ -242,12 +242,18 @@ async function submitBan() {
     try {
         const until = banDialog.until ? new Date(banDialog.until).toISOString() : null;
         const data = await banTeam(banDialog.row.id, { reason, until });
-        ElMessage.success(
-            data?.overwrote === "mute"
-                ? "已封禁；原禁言已被本次封禁覆盖（解封后不恢复）"
-                : "已封禁",
-        );
         banDialog.visible = false;
+        // 队伍含 staff/admin 成员时后端按解散处理（banned:false + dissolved:true），
+        // 不是封禁、也无法解封，不能提示「已封禁」。
+        if (data?.dissolved) {
+            ElMessage.warning("该队伍含 staff / admin 成员，已按解散处理，不能解封");
+        } else {
+            ElMessage.success(
+                data?.overwrote === "mute"
+                    ? "已封禁；原禁言已被本次封禁覆盖（解封后不恢复）"
+                    : "已封禁",
+            );
+        }
         first();
         // 封禁会覆盖禁言，禁言列表需要跟着刷新
         refreshMutes();

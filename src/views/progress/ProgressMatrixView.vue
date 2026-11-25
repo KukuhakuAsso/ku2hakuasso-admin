@@ -138,7 +138,7 @@ import {
     TEAM_STATUS,
     statusMeta,
 } from "@/utils/format";
-import { describeApiError } from "@/api/errors";
+import { describeApiError } from "@/config/errors";
 import { isStaleRequest, requestLatest, cancelChannel } from "@/api/http";
 import PageNav from "@/components/PageNav.vue";
 

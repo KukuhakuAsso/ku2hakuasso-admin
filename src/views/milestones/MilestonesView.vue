@@ -48,7 +48,7 @@ import { onMounted, reactive, ref } from "vue";
 import { ElMessage } from "element-plus";
 import { useAuthStore } from "@/stores/auth";
 import { listMilestones, createMilestone } from "@/api/milestones";
-import { extractErrorMessage } from "@/api/errors";
+import { extractErrorMessage } from "@/config/errors";
 
 const auth = useAuthStore();
 const loading = ref(false);
@@ -89,7 +89,8 @@ async function submitCreate() {
             key: createDialog.form.key.trim(),
             title: createDialog.form.title.trim(),
             kind: createDialog.form.kind.trim(),
-            tipsReward: createDialog.form.tipsReward,
+            // 请求体是 snake_case：后端只认 tips_reward，传 tipsReward 会被静默忽略
+            tips_reward: createDialog.form.tipsReward,
         });
         ElMessage.success("已创建");
         createDialog.visible = false;

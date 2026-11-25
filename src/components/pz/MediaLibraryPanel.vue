@@ -13,7 +13,7 @@ import { computed, ref, watch } from "vue";
 import { ElMessage } from "element-plus";
 import { useAuthStore } from "@/stores/auth";
 import { listMedia } from "@/api/pz";
-import { describeApiError } from "@/api/errors";
+import { describeApiError } from "@/config/errors";
 import MediaTable from "@/components/pz/MediaTable.vue";
 import MediaUploader from "@/components/pz/MediaUploader.vue";
 

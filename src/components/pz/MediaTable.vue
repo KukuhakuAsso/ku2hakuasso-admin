@@ -20,7 +20,7 @@ import {
     unmarkPuzzleMedia,
     updateMedia,
 } from "@/api/pz";
-import { describeApiError } from "@/api/errors";
+import { describeApiError } from "@/config/errors";
 
 const props = defineProps({
     rows: { type: Array, default: () => [] },
@@ -74,7 +74,7 @@ async function run(row, action, request, successText) {
         ElMessage.success(successText);
         emit("refresh");
     } catch (error) {
-        // reason_code（MEDIA_*）的文案在 api/errors.js 统一维护
+        // reason_code（MEDIA_*）的文案在 config/errors.js 统一维护
         ElMessage.error(describeApiError(error, { fallback: "操作失败" }));
     } finally {
         busyId.value = null;

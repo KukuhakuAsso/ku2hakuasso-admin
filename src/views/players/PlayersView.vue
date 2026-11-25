@@ -196,7 +196,7 @@ import { useWorkbenchBadges } from "@/composables/useWorkbenchBadges";
 import PageNav from "@/components/PageNav.vue";
 import MuteDialog from "@/components/MuteDialog.vue";
 import { pick, fmtTime, ACCOUNT_STATUS, statusMeta } from "@/utils/format";
-import { canPunishRole, extractErrorMessage, punishRoleBlockedReason } from "@/api/errors";
+import { canPunishRole, extractErrorMessage, punishRoleBlockedReason } from "@/config/errors";
 
 const auth = useAuthStore();
 const router = useRouter();

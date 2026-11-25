@@ -8,7 +8,7 @@ import {
     unmuteAccount,
     unmuteTeam,
 } from "@/api/moderation";
-import { extractErrorMessage } from "@/api/errors";
+import { extractErrorMessage } from "@/config/errors";
 import { useWorkbenchBadges } from "@/composables/useWorkbenchBadges";
 
 // 列表单次最多返回 200 条且不分页，超出时 hasMore=true

@@ -7,7 +7,7 @@ import { getCurrentScope, onScopeDispose, ref, useId, watch } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { getPuzzleHints, putPuzzleHints } from "@/api/pz";
 import { cancelChannel, isStaleRequest, requestLatest } from "@/api/http";
-import { describeApiError } from "@/api/errors";
+import { describeApiError } from "@/config/errors";
 
 const props = defineProps({
     puzzleKey: { type: String, required: true },

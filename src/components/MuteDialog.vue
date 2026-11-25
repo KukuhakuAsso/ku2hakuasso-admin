@@ -52,7 +52,7 @@
 import { computed, reactive, ref, watch } from "vue";
 import { ElMessage } from "element-plus";
 import { muteAccount, muteTeam } from "@/api/moderation";
-import { extractErrorMessage, extractFieldMessage } from "@/api/errors";
+import { extractErrorMessage, extractFieldMessage } from "@/config/errors";
 
 // 禁言对话框：账号级（players/:id/mute）或队伍级（teams/:id/mute）。
 // reason 必填 1–200；until 省略 = 永久，必须是未来时间（否则后端 400）。

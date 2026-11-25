@@ -98,7 +98,7 @@
 import { computed, ref, watch } from "vue";
 import { listSubmissions } from "@/api/progress";
 import { useAuthStore } from "@/stores/auth";
-import { describeApiError } from "@/api/errors";
+import { describeApiError } from "@/config/errors";
 import { fmtTime, fmtDuration } from "@/utils/format";
 
 const PAGE_SIZE = 20;

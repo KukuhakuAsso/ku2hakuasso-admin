@@ -47,7 +47,7 @@ import { listSubmissions } from "@/api/progress";
 import { useCursorPage } from "@/composables/useCursorPage";
 import PageNav from "@/components/PageNav.vue";
 import { fmtTime, fmtDuration } from "@/utils/format";
-import { describeApiError } from "@/api/errors";
+import { describeApiError } from "@/config/errors";
 
 const auth = useAuthStore();
 const filters = reactive({ team_id: "", account_id: "", puzzle_key: "", with_answer: false });

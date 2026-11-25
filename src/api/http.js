@@ -2,7 +2,7 @@
 // 管理端 API 前缀由 VITE_API_BASE_PATH 配置，并映射到后端 /api/* 路径。
 // 与站点其它子项目保持一致；登录态为 Bearer access_token。
 import { apiConfig, buildApiUrl, getApiHeaders, isApiUrl, resolveServerUrl } from "@/config/api";
-import { extractErrorMessage } from "@/api/errors";
+import { extractErrorMessage } from "@/config/errors";
 import { ElMessage } from "element-plus";
 
 export class ApiError extends Error {

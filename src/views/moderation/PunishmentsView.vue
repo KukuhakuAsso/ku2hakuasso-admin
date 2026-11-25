@@ -140,7 +140,7 @@ import {
 import { unbanPlayer } from "@/api/players";
 import { unbanTeam } from "@/api/teams";
 import { fmtTime } from "@/utils/format";
-import { extractErrorMessage } from "@/api/errors";
+import { extractErrorMessage } from "@/config/errors";
 import { useWorkbenchBadges } from "@/composables/useWorkbenchBadges";
 
 // 处罚记录：GET /admin/mutes（staff + moderation.mute）与 GET /admin/banneds（admin）。

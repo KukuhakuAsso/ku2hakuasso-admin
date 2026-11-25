@@ -10,7 +10,7 @@ import { deleteFolder, listFolders, upsertFolder } from "@/api/pz";
 import { listAuthorCandidates } from "@/api/accounts";
 import { cancelChannel, isStaleRequest, requestLatest } from "@/api/http";
 import { useAuthStore } from "@/stores/auth";
-import { describeApiError } from "@/api/errors";
+import { describeApiError } from "@/config/errors";
 import UnlockForm from "@/components/pz/UnlockForm.vue";
 
 const emit = defineEmits(["changed"]);

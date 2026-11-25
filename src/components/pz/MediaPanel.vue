@@ -9,7 +9,7 @@ import { computed, getCurrentScope, onScopeDispose, ref, useId, watch } from "vu
 import { ElMessage } from "element-plus";
 import { listMedia } from "@/api/pz";
 import { cancelChannel, isStaleRequest, requestLatest } from "@/api/http";
-import { describeApiError } from "@/api/errors";
+import { describeApiError } from "@/config/errors";
 import MediaTable from "@/components/pz/MediaTable.vue";
 import MediaUploader from "@/components/pz/MediaUploader.vue";
 

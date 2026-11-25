@@ -15,7 +15,7 @@ import {
 } from "@/api/pz";
 import { cancelChannel, isStaleRequest, requestLatest } from "@/api/http";
 import SourceEditor from "@/components/pz/SourceEditor.vue";
-import { extractErrorMessage } from "@/api/errors";
+import { extractErrorMessage } from "@/config/errors";
 
 const emit = defineEmits(["changed", "published"]);
 

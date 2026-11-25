@@ -12,7 +12,7 @@ import {
     errorDetail,
     errorReasonCode,
     extractErrorMessage,
-} from "@/api/errors";
+} from "@/config/errors";
 import SourceEditor from "@/components/pz/SourceEditor.vue";
 import UnlockForm from "@/components/pz/UnlockForm.vue";
 import PageMergeDialog from "@/components/pz/PageMergeDialog.vue";

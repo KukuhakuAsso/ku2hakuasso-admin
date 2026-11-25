@@ -8,7 +8,7 @@
 // 原生标签带不上，统一走 blob（见 composables/useProtectedMedia、api/http.fetchResource）。
 import { computed, ref, watch } from "vue";
 import { getPuzzlePreview } from "@/api/pz";
-import { extractErrorMessage, describeApiError } from "@/api/errors";
+import { extractErrorMessage, describeApiError } from "@/config/errors";
 import { useMediaObjectUrl, useMarkdownMedia } from "@/composables/useProtectedMedia";
 import { renderMarkdown } from "@/utils/miniMarkdown";
 import PreviewMalleable from "@/components/pz/PreviewMalleable.vue";

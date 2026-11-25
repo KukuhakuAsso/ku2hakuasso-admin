@@ -8,7 +8,7 @@ import { computed, reactive, ref } from "vue";
 import { ElMessage } from "element-plus";
 import { useAuthStore } from "@/stores/auth";
 import { confirmMedia, signMedia, uploadToSignedUrl } from "@/api/pz";
-import { describeApiError } from "@/api/errors";
+import { describeApiError } from "@/config/errors";
 import { MEDIA_KINDS, validateMediaFile } from "@/config/pz";
 
 const props = defineProps({

@@ -9,7 +9,7 @@
 // /api/admin/pz/puzzle/:key/asset/:name/:version，由 fetchResource 统一换前缀并带鉴权。
 import { ref } from "vue";
 import { fetchResource } from "@/api/http";
-import { extractErrorMessage } from "@/api/errors";
+import { extractErrorMessage } from "@/config/errors";
 import { verifySha384 } from "@/utils/integrity";
 
 // 已注册的组件 tag（进程级，跨弹窗复用）

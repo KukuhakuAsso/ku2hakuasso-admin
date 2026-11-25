@@ -12,7 +12,7 @@ import {
     upsertIframeOrigin,
 } from "@/api/pz";
 import { cancelChannel, isStaleRequest, requestLatest } from "@/api/http";
-import { describeApiError } from "@/api/errors";
+import { describeApiError } from "@/config/errors";
 import { normalizeIframeOrigin } from "@/utils/iframeOrigin";
 import { pick } from "@/utils/format";
 

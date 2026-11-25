@@ -96,7 +96,7 @@ import { ApiError } from "@/api/http";
 import { apiRegistrationConfig } from "@/api/auth";
 import RegisterSteps from "@/views/auth/RegisterSteps.vue";
 import ResetPasswordPanel from "@/views/auth/ResetPasswordPanel.vue";
-import { extractErrorMessage } from "@/api/errors";
+import { extractErrorMessage } from "@/config/errors";
 
 const router = useRouter();
 const route = useRoute();

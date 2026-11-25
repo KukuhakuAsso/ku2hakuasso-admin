@@ -10,7 +10,7 @@ import { ElMessage } from "element-plus";
 import { putPuzzle } from "@/api/pz";
 import { listAuthorCandidates } from "@/api/accounts";
 import { pick } from "@/utils/format";
-import { describeApiError } from "@/api/errors";
+import { describeApiError } from "@/config/errors";
 import PageMergeDialog from "@/components/pz/PageMergeDialog.vue";
 import { META_ROW_ACTION, decideMetaRow } from "./metaMerge.js";
 

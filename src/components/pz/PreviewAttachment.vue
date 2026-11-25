@@ -4,7 +4,7 @@
 import { computed, ref } from "vue";
 import { ElMessage } from "element-plus";
 import { fetchResource } from "@/api/http";
-import { extractErrorMessage } from "@/api/errors";
+import { extractErrorMessage } from "@/config/errors";
 import { useMediaObjectUrl } from "@/composables/useProtectedMedia";
 
 const props = defineProps({

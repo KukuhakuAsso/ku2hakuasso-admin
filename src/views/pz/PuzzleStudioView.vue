@@ -9,7 +9,7 @@ import { computed, ref } from "vue";
 import { ElMessage } from "element-plus";
 import { getPuzzlePage, listFolders, listPuzzles, listWidgets, putPuzzle } from "@/api/pz";
 import { pick } from "@/utils/format";
-import { describeApiError, extractErrorMessage } from "@/api/errors";
+import { describeApiError, extractErrorMessage } from "@/config/errors";
 import { useAuthStore } from "@/stores/auth";
 import PageForm from "@/components/pz/PageForm.vue";
 import PuzzleMetaForm from "@/components/pz/PuzzleMetaForm.vue";

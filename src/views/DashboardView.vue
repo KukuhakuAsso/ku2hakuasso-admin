@@ -83,7 +83,7 @@ import { computed, onMounted, ref } from "vue";
 import { ElMessage } from "element-plus";
 import { getStats } from "@/api/maintenance";
 import { fmtTime, fmtJson } from "@/utils/format";
-import { extractErrorMessage } from "@/api/errors";
+import { extractErrorMessage } from "@/config/errors";
 
 // 已知字段给中文名，未知字段原样显示（后端加指标不用改前端）
 const LIVE_LABELS = {

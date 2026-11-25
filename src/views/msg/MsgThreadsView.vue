@@ -414,7 +414,7 @@ import {
   TICKET_STATUS,
   ticketAssigneeName,
 } from "@/utils/format";
-import { extractErrorMessage } from "@/api/errors";
+import { extractErrorMessage } from "@/config/errors";
 
 const POLL_INTERVAL_MS = 180000;
 let pollTimer = null;

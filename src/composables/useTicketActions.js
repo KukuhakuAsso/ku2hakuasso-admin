@@ -11,7 +11,7 @@
 // 其余 403（HINT_REPLY_CLOSED / APPEAL_REPLY_CLOSED / 缺来源权限等）没有可执行的动作，
 // 这里返回 null，由调用方用 extractErrorMessage 展示后端原文。
 import { claimTicket, releaseTicket } from "@/api/msg";
-import { errorDetail, errorReasonCode } from "@/api/errors";
+import { errorDetail, errorReasonCode } from "@/config/errors";
 import { ticketAssigneeName } from "@/utils/format";
 
 export const TICKET_ERROR_ACTION = {
@@ -24,7 +24,7 @@ export const TICKET_ERROR_ACTION = {
 
 export function describeTicketError(error) {
     const status = Number(error?.status);
-    // 统一错误体：error.detail 里的 reason_code / ticket（见 api/errors.js）
+    // 统一错误体：error.detail 里的 reason_code / ticket（见 config/errors.js）
     const detail = errorDetail(error);
     const reason = errorReasonCode(error);
     const holder = ticketAssigneeName(detail.ticket) || "其他 staff";

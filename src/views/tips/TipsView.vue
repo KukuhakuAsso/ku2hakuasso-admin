@@ -185,7 +185,7 @@ import {
     settleTips,
 } from "@/api/maintenance";
 import { listTeams } from "@/api/teams";
-import { extractErrorMessage } from "@/api/errors";
+import { extractErrorMessage } from "@/config/errors";
 import { fmtTime, TEAM_STATUS, statusMeta } from "@/utils/format";
 
 const auth = useAuthStore();

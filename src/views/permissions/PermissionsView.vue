@@ -169,7 +169,7 @@ import {
     listPermissions,
     revokePermissionGroup,
 } from "@/api/msg";
-import { extractErrorMessage } from "@/api/errors";
+import { extractErrorMessage } from "@/config/errors";
 
 const route = useRoute();
 

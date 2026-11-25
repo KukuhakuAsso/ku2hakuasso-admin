@@ -1,7 +1,7 @@
 // 注册 / 找回密码用到的基础校验。
 // 口径与玩家端（vue-mistarg2anns/src/views/RegisterView.vue）保持一致，
 // 规则来自 api-5-username-management.md「用户名规则」与 api-3-registration.md。
-import { errorDetail } from "@/api/errors";
+import { errorDetail } from "@/config/errors";
 
 // 用户名统一去首尾空白（服务端也会做 NFC 归一化与去空白）
 export function normalizeUsername(value) {
